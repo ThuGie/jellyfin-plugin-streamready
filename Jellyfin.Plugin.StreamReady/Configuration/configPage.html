@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>StreamReady</title>
+</head>
+<body>
+<div id="StreamReadyPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-checkbox,emby-select,emby-button">
+    <script>
+        (function () {
+            var link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = ApiClient.getUrl('/StreamReady/Configuration/configPage.css');
+            document.head.appendChild(link);
+        })();
+    </script>
+    <div data-role="content">
+        <div class="content-primary">
+            <div class="sr-sticky-header" id="srStickyHeader">
+                <div class="sectionTitleContainer">
+                    <div class="sr-header-title-row">
+                        <h2 class="sectionTitle">StreamReady</h2>
+                        <a is="emby-linkbutton" class="raised raised-mini emby-button" target="_blank" href="https://github.com/ThuGie/jellyfin-plugin-streamready">Help</a>
+                        <button id="srToggleDesc" type="button" class="raised raised-mini emby-button" aria-pressed="true">Descriptions On</button>
+                    </div>
+                    <div id="srSettingsSearchContainer">
+                        <div>
+                            <i class="material-icons sr-search-icon">search</i>
+                            <input id="srSettingsSearchInput" type="text" placeholder="Search settings..." />
+                        </div>
+                    </div>
+                </div>
+                <div class="sr-tab-bar">
+                    <button type="button" class="jellyfin-tab-button active" data-tab="overview"><h3><i class="material-icons">dashboard</i>Overview</h3></button>
+                    <button type="button" class="jellyfin-tab-button" data-tab="needs"><h3><i class="material-icons">playlist_add_check</i>Needs Encoding</h3></button>
+                    <button type="button" class="jellyfin-tab-button" data-tab="queue"><h3><i class="material-icons">queue</i>Queue</h3></button>
+                    <button type="button" class="jellyfin-tab-button" data-tab="compatibility"><h3><i class="material-icons">rule</i>Compatibility</h3></button>
+                    <button type="button" class="jellyfin-tab-button" data-tab="encoding"><h3><i class="material-icons">movie</i>Encoding</h3></button>
+                    <button type="button" class="jellyfin-tab-button" data-tab="libraries"><h3><i class="material-icons">video_library</i>Libraries</h3></button>
+                    <button type="button" class="jellyfin-tab-button" data-tab="replacement"><h3><i class="material-icons">swap_horiz</i>Replacement</h3></button>
+                    <button type="button" class="jellyfin-tab-button" data-tab="schedule"><h3><i class="material-icons">schedule</i>Schedule</h3></button>
+                    <button type="button" class="jellyfin-tab-button" data-tab="docs"><h3><i class="material-icons">menu_book</i>Docs</h3></button>
+                </div>
+            </div>
+
+            <form id="StreamReadyForm">
+                <div id="overview" class="jellyfin-tab-content active">
+                    <div class="sr-info-banner sr-fieldset-wide">
+                        <i class="material-icons sr-info-icon">info</i>
+                        <div>StreamReady finds movies and episodes that are too large or incompatible for Direct Play, then pre-encodes them. <strong>Manual mode is the default</strong>: scan first, review the list, then encode one file or a selection. Enable Auto Direct Pre-Transcode only if you want matching files queued automatically.</div>
+                    </div>
+                    <fieldset class="sr-fieldset-wide">
+                        <legend class="sectionTitle"><i class="material-icons sr-legend-icon">tune</i>Mode</legend>
+                        <div class="configSection">
+                            <div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" id="Enabled"/><span>Enable StreamReady</span></label></div>
+                            <div class="sr-setting-description"><div class="fieldDescription">Master switch. Scanning and encoding do nothing while this is off.</div></div>
+                            <div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" id="AutoDirectPreTranscode"/><span>Auto Direct Pre-Transcode</span></label></div>
+                            <div class="sr-setting-description"><div class="fieldDescription">When on, a scan also queues every match. When off (recommended), files only appear under Needs Encoding until you press Encode.</div></div>
+                        </div>
+                    </fieldset>
+                    <fieldset class="sr-fieldset-wide">
+                        <legend class="sectionTitle"><i class="material-icons sr-legend-icon">sensors</i>Status</legend>
+                        <div class="configSection">
+                            <div class="sr-status-grid" id="srStatusGrid"></div>
+                        </div>
+                    </fieldset>
+                    <fieldset class="sr-fieldset-wide">
+                        <legend class="sectionTitle"><i class="material-icons sr-legend-icon">bolt</i>Quick actions</legend>
+                        <div class="configSection">
+                            <div class="sr-quick-actions-grid">
+                                <button type="button" class="sr-quick-action" id="srScanNow"><i class="material-icons">search</i><span><span class="sr-quick-action-title">Scan now</span><span class="sr-quick-action-detail">Find files that need encoding</span></span></button>
+                                <button type="button" class="sr-quick-action" id="srPauseWorker"><i class="material-icons">pause</i><span><span class="sr-quick-action-title">Pause encoder</span><span class="sr-quick-action-detail">Keep queued jobs waiting</span></span></button>
+                                <button type="button" class="sr-quick-action" id="srResumeWorker"><i class="material-icons">play_arrow</i><span><span class="sr-quick-action-title">Resume encoder</span><span class="sr-quick-action-detail">Continue the encode queue</span></span></button>
+                            </div>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <div id="needs" class="jellyfin-tab-content">
+                    <div class="sr-info-banner">
+                        <i class="material-icons sr-info-icon">playlist_add_check</i>
+                        <div>Review files that failed compatibility or size rules. Encode one row, or select several and queue them. Nothing is rewritten until you press Encode (unless Auto is on).</div>
+                    </div>
+                    <fieldset class="sr-fieldset-wide">
+                        <legend class="sectionTitle"><i class="material-icons sr-legend-icon">filter_list</i>Needs encoding</legend>
+                        <div class="configSection">
+                            <div class="sr-toolbar">
+                                <select is="emby-select" id="srFilterType">
+                                    <option value="">All types</option>
+                                    <option value="Movie">Movies</option>
+                                    <option value="Episode">Episodes</option>
+                                </select>
+                                <select is="emby-select" id="srFilterReason">
+                                    <option value="">All reasons</option>
+                                    <option value="Container">Container</option>
+                                    <option value="Video">Video</option>
+                                    <option value="VideoRange">HDR / Dolby Vision</option>
+                                    <option value="Audio">Audio</option>
+                                    <option value="Size">Size</option>
+                                    <option value="Bitrate">Bitrate</option>
+                                </select>
+                                <button type="button" class="raised emby-button" id="srEncodeSelected">Encode selected</button>
+                                <button type="button" class="raised emby-button" id="srEncodeVisible">Encode all visible</button>
+                            </div>
+                            <div id="srCandidates" class="sr-table-wrap"></div>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <div id="queue" class="jellyfin-tab-content">
+                    <div class="sr-info-banner">
+                        <i class="material-icons sr-info-icon">queue</i>
+                        <div>Only jobs that were queued (manually or by Auto) appear here. The worker encodes one file at a time.</div>
+                    </div>
+                    <fieldset class="sr-fieldset-wide">
+                        <legend class="sectionTitle"><i class="material-icons sr-legend-icon">pending_actions</i>Encode queue</legend>
+                        <div class="configSection">
+                            <div id="srQueue" class="sr-table-wrap"></div>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <div id="compatibility" class="jellyfin-tab-content">
+                    <div class="sr-info-banner">
+                        <i class="material-icons sr-info-icon">rule</i>
+                        <div>A file is listed when any enabled rule fails. Defaults match typical Direct Play: MP4, H.264, AAC/AC3, SDR, under 25 GiB / 25 Mbps.</div>
+                    </div>
+                    <fieldset>
+                        <legend class="sectionTitle"><i class="material-icons sr-legend-icon">inventory_2</i>Allow lists</legend>
+                        <div class="configSection">
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="AllowedContainers">Allowed containers</label>
+                                <input is="emby-input" id="AllowedContainers" type="text" />
+                            </div>
+                            <div class="sr-setting-description"><div class="fieldDescription">Comma-separated. Example: mp4,m4v,mov</div></div>
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="AllowedVideoCodecs">Allowed video codecs</label>
+                                <input is="emby-input" id="AllowedVideoCodecs" type="text" />
+                            </div>
+                            <div class="sr-setting-description"><div class="fieldDescription">Example: h264 or h264,hevc</div></div>
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="AllowedAudioCodecs">Allowed audio codecs</label>
+                                <input is="emby-input" id="AllowedAudioCodecs" type="text" />
+                            </div>
+                            <div class="sr-setting-description"><div class="fieldDescription">TrueHD, DTS-HD, and FLAC usually force a transcode on TVs and browsers.</div></div>
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="AllowedVideoRanges">Allowed video ranges</label>
+                                <input is="emby-input" id="AllowedVideoRanges" type="text" />
+                            </div>
+                            <div class="sr-setting-description"><div class="fieldDescription">SDR is safest. Add HDR10 or DOVI only if your clients Direct Play them.</div></div>
+                        </div>
+                    </fieldset>
+                    <fieldset>
+                        <legend class="sectionTitle"><i class="material-icons sr-legend-icon">straighten</i>Size limits</legend>
+                        <div class="configSection">
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="MaxFileSizeGiB">Max file size (GiB)</label>
+                                <input is="emby-input" id="MaxFileSizeGiB" type="number" step="0.5" min="0" />
+                            </div>
+                            <div class="sr-setting-description"><div class="fieldDescription">0 disables the size rule.</div></div>
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="MaxVideoBitrateMbps">Max video bitrate (Mbps)</label>
+                                <input is="emby-input" id="MaxVideoBitrateMbps" type="number" step="0.5" min="0" />
+                            </div>
+                            <div class="sr-setting-description"><div class="fieldDescription">0 disables the bitrate rule.</div></div>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <div id="encoding" class="jellyfin-tab-content">
+                    <fieldset>
+                        <legend class="sectionTitle"><i class="material-icons sr-legend-icon">high_quality</i>Output preset</legend>
+                        <div class="configSection">
+                            <div class="selectContainer">
+                                <label class="inputLabel" for="EncodingPreset">Encoding preset</label>
+                                <select is="emby-select" id="EncodingPreset">
+                                    <option value="MaxCompatibility">Max compatibility — MP4, H.264, AAC stereo, SDR</option>
+                                    <option value="Balanced">Balanced — MP4, H.264, AAC 5.1, SDR, high CRF</option>
+                                    <option value="HevcCompact">HEVC compact — MP4, HEVC 8-bit, AAC 5.1, SDR</option>
+                                </select>
+                            </div>
+                            <div class="sr-setting-description"><div class="fieldDescription">Controls the output format. Compatibility rules above still decide *whether* a file is listed.</div></div>
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="Crf">CRF / quality (0 = preset default)</label>
+                                <input is="emby-input" id="Crf" type="number" min="0" max="51" />
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="ResolutionCap">Resolution cap (0 = keep source)</label>
+                                <input is="emby-input" id="ResolutionCap" type="number" min="0" step="2" />
+                            </div>
+                            <div class="sr-setting-description"><div class="fieldDescription">Example: 1080 to downscale 4K.</div></div>
+                            <div class="selectContainer">
+                                <label class="inputLabel" for="HardwareAccel">Hardware acceleration</label>
+                                <select is="emby-select" id="HardwareAccel">
+                                    <option value="FollowServer">Follow Jellyfin server</option>
+                                    <option value="Software">Software</option>
+                                    <option value="nvenc">NVIDIA NVENC</option>
+                                    <option value="qsv">Intel QSV</option>
+                                    <option value="vaapi">VAAPI</option>
+                                    <option value="amf">AMD AMF</option>
+                                    <option value="videotoolbox">VideoToolbox</option>
+                                </select>
+                            </div>
+                            <div class="selectContainer">
+                                <label class="inputLabel" for="AudioChannels">Audio channels (0 = preset default)</label>
+                                <select is="emby-select" id="AudioChannels">
+                                    <option value="0">Preset default</option>
+                                    <option value="2">Stereo</option>
+                                    <option value="6">5.1</option>
+                                </select>
+                            </div>
+                            <div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" id="ToneMapHdr"/><span>Tone-map HDR / Dolby Vision to SDR</span></label></div>
+                            <div class="selectContainer">
+                                <label class="inputLabel" for="FfmpegPreset">x264 / x265 speed preset</label>
+                                <select is="emby-select" id="FfmpegPreset">
+                                    <option value="ultrafast">ultrafast</option>
+                                    <option value="superfast">superfast</option>
+                                    <option value="veryfast">veryfast</option>
+                                    <option value="faster">faster</option>
+                                    <option value="fast">fast</option>
+                                    <option value="medium">medium</option>
+                                    <option value="slow">slow</option>
+                                    <option value="slower">slower</option>
+                                </select>
+                            </div>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <div id="libraries" class="jellyfin-tab-content">
+                    <div class="sr-note-banner">
+                        <i class="material-icons sr-info-icon">warning_amber</i>
+                        <div>Select at least one movie or TV library. StreamReady stays idle until libraries are saved.</div>
+                    </div>
+                    <fieldset class="sr-fieldset-wide">
+                        <legend class="sectionTitle"><i class="material-icons sr-legend-icon">video_library</i>Libraries to scan</legend>
+                        <div class="configSection">
+                            <div id="srLibraryList" class="sr-library-list"></div>
+                            <div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" id="IncludeExtras"/><span>Include extras / specials extras</span></label></div>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <div id="replacement" class="jellyfin-tab-content">
+                    <div class="sr-note-banner">
+                        <i class="material-icons sr-info-icon">warning_amber</i>
+                        <div>Rewriting files on disk can confuse Radarr/Sonarr quality profiles. Backup mode is the recommended default.</div>
+                    </div>
+                    <fieldset>
+                        <legend class="sectionTitle"><i class="material-icons sr-legend-icon">swap_horiz</i>After a successful encode</legend>
+                        <div class="configSection">
+                            <div class="selectContainer">
+                                <label class="inputLabel" for="ReplacementPolicy">Replacement policy</label>
+                                <select is="emby-select" id="ReplacementPolicy">
+                                    <option value="Backup">Replace original, keep a backup</option>
+                                    <option value="Replace">Replace original, delete after verify</option>
+                                    <option value="Sidecar">Keep original, write a .streamready sidecar</option>
+                                </select>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="BackupFolder">Backup folder (empty = .streamready-backup next to the file)</label>
+                                <input is="emby-input" id="BackupFolder" type="text" />
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="BackupRetentionDays">Backup retention (days, 0 = keep forever)</label>
+                                <input is="emby-input" id="BackupRetentionDays" type="number" min="0" />
+                            </div>
+                            <div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" id="VerifyBeforeReplace"/><span>Verify duration before replacing</span></label></div>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <div id="schedule" class="jellyfin-tab-content">
+                    <fieldset>
+                        <legend class="sectionTitle"><i class="material-icons sr-legend-icon">schedule</i>When to scan</legend>
+                        <div class="configSection">
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="ScanIntervalHours">Automatic scan interval (hours, 0 = only manual)</label>
+                                <input is="emby-input" id="ScanIntervalHours" type="number" min="0" />
+                            </div>
+                            <div class="sr-setting-description"><div class="fieldDescription">Scans fill Needs Encoding. Auto Direct Pre-Transcode then also queues matches. You can also run Dashboard → Scheduled Tasks → StreamReady library scan.</div></div>
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="MaxConcurrentJobs">Max concurrent encodes</label>
+                                <input is="emby-input" id="MaxConcurrentJobs" type="number" min="1" max="2" />
+                            </div>
+                            <div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" id="PauseDuringPlayback"/><span>Pause encoding while anyone is playing media</span></label></div>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <div id="docs" class="jellyfin-tab-content">
+                    <fieldset class="sr-fieldset-wide">
+                        <legend class="sectionTitle"><i class="material-icons sr-legend-icon">menu_book</i>How StreamReady works</legend>
+                        <div class="configSection sr-docs">
+                            <p>Jellyfin live-transcodes when a client cannot Direct Play the container, video codec, HDR range, or audio codec. StreamReady does that work ahead of time and writes a stream-friendly file.</p>
+                            <p><strong>Manual:</strong> Scan → review Needs Encoding → Encode one or selected files.</p>
+                            <p><strong>Auto Direct Pre-Transcode:</strong> Scan results go straight into the queue. Still one encode at a time, still skips files that are playing.</p>
+                            <p>Smart planning remuxes when only the container is wrong, copies video when only audio is wrong, and fully encodes for HEVC 10-bit, Dolby Vision, or oversized files.</p>
+                            <p>Install via a custom catalog: Dashboard → Plugins → Repositories, then add this plugin’s <code>manifest.json</code> URL from the GitHub repository.</p>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <div class="sr-save-dock">
+                    <button is="emby-button" type="submit" class="raised button-submit sr-save-dock-btn">
+                        <i class="material-icons">save</i>
+                        <span>Save</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <script>
+        (function () {
+            var pluginId = '9d2e8c4a-1f6b-4a73-b8e0-5c9f3a7d2e11';
+            var page = document.querySelector('#StreamReadyPage');
+            var pollTimer = null;
+            var visibleCandidates = [];
+
+            function api(path, method, body) {
+                var opts = {
+                    type: method || 'GET',
+                    url: ApiClient.getUrl('/StreamReady' + path),
+                    headers: { 'Accept': 'application/json' }
+                };
+                if (body) {
+                    opts.data = JSON.stringify(body);
+                    opts.contentType = 'application/json';
+                }
+                return ApiClient.ajax(opts);
+            }
+
+            function detectTheme() {
+                var bg = getComputedStyle(document.body).backgroundColor || '';
+                var m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+                if (!m) return;
+                var lum = (0.2126 * m[1] + 0.7152 * m[2] + 0.0722 * m[3]) / 255;
+                page.classList.toggle('sr-light-theme', lum > 0.5);
+            }
+
+            function showTab(id) {
+                page.querySelectorAll('.jellyfin-tab-button').forEach(function (btn) {
+                    btn.classList.toggle('active', btn.getAttribute('data-tab') === id);
+                });
+                page.querySelectorAll('.jellyfin-tab-content').forEach(function (el) {
+                    el.classList.toggle('active', el.id === id);
+                });
+                if (id === 'needs') loadCandidates();
+                if (id === 'queue') loadQueue();
+            }
+
+            function val(id) { return page.querySelector('#' + id); }
+
+            function loadConfig() {
+                Dashboard.showLoadingMsg();
+                Promise.all([
+                    ApiClient.getPluginConfiguration(pluginId),
+                    api('/libraries')
+                ]).then(function (results) {
+                    var config = results[0];
+                    var libraries = results[1] || [];
+                    ['Enabled', 'AutoDirectPreTranscode', 'IncludeExtras', 'ToneMapHdr', 'VerifyBeforeReplace', 'PauseDuringPlayback'].forEach(function (id) {
+                        var el = val(id);
+                        if (el) el.checked = !!config[id];
+                    });
+                    ['AllowedContainers', 'AllowedVideoCodecs', 'AllowedAudioCodecs', 'AllowedVideoRanges', 'EncodingPreset', 'HardwareAccel', 'ReplacementPolicy', 'BackupFolder', 'FfmpegPreset'].forEach(function (id) {
+                        var el = val(id);
+                        if (el && config[id] != null) el.value = config[id];
+                    });
+                    ['MaxFileSizeGiB', 'MaxVideoBitrateMbps', 'Crf', 'ResolutionCap', 'AudioChannels', 'BackupRetentionDays', 'ScanIntervalHours', 'MaxConcurrentJobs'].forEach(function (id) {
+                        var el = val(id);
+                        if (el && config[id] != null) el.value = config[id];
+                    });
+                    renderLibraries(libraries, (config.SelectedLibraryIds || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean));
+                    Dashboard.hideLoadingMsg();
+                    refreshStatus();
+                    loadCandidates();
+                    loadQueue();
+                }).catch(function () {
+                    Dashboard.hideLoadingMsg();
+                    Dashboard.alert('Failed to load StreamReady settings');
+                });
+            }
+
+            function renderLibraries(libraries, selected) {
+                var host = val('srLibraryList');
+                if (!host) return;
+                if (!libraries.length) {
+                    host.innerHTML = '<div class="sr-empty">No virtual folders found.</div>';
+                    return;
+                }
+                host.innerHTML = libraries.map(function (lib) {
+                    var checked = selected.indexOf(lib.id) >= 0 || selected.indexOf((lib.id || '').replace(/-/g, '')) >= 0 ? ' checked' : '';
+                    return '<div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" class="sr-lib" data-id="' + lib.id + '"' + checked + '/><span>' + escapeHtml(lib.name) + ' <em>(' + escapeHtml(lib.collectionType || 'mixed') + ')</em></span></label></div>';
+                }).join('');
+            }
+
+            function selectedLibraries() {
+                return Array.prototype.slice.call(page.querySelectorAll('.sr-lib:checked')).map(function (el) {
+                    return el.getAttribute('data-id');
+                }).join(',');
+            }
+
+            function saveConfig(e) {
+                e.preventDefault();
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                    ['Enabled', 'AutoDirectPreTranscode', 'IncludeExtras', 'ToneMapHdr', 'VerifyBeforeReplace', 'PauseDuringPlayback'].forEach(function (id) {
+                        config[id] = !!val(id).checked;
+                    });
+                    ['AllowedContainers', 'AllowedVideoCodecs', 'AllowedAudioCodecs', 'AllowedVideoRanges', 'EncodingPreset', 'HardwareAccel', 'ReplacementPolicy', 'BackupFolder', 'FfmpegPreset'].forEach(function (id) {
+                        config[id] = val(id).value;
+                    });
+                    config.MaxFileSizeGiB = parseFloat(val('MaxFileSizeGiB').value) || 0;
+                    config.MaxVideoBitrateMbps = parseFloat(val('MaxVideoBitrateMbps').value) || 0;
+                    config.Crf = parseInt(val('Crf').value, 10) || 0;
+                    config.ResolutionCap = parseInt(val('ResolutionCap').value, 10) || 0;
+                    config.AudioChannels = parseInt(val('AudioChannels').value, 10) || 0;
+                    config.BackupRetentionDays = parseInt(val('BackupRetentionDays').value, 10) || 0;
+                    config.ScanIntervalHours = parseInt(val('ScanIntervalHours').value, 10) || 0;
+                    config.MaxConcurrentJobs = parseInt(val('MaxConcurrentJobs').value, 10) || 1;
+                    config.SelectedLibraryIds = selectedLibraries();
+                    ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
+                        Dashboard.processPluginConfigurationUpdateResult(result);
+                    });
+                });
+                return false;
+            }
+
+            function refreshStatus() {
+                api('/status').then(function (s) {
+                    var grid = val('srStatusGrid');
+                    if (!grid) return;
+                    var cards = [
+                        card(s.ffmpegReady ? 'sr-ok' : 'sr-warn', 'movie_filter', 'FFmpeg', s.ffmpegReady ? s.ffmpegPath : 'Not found'),
+                        card(s.autoDirectPreTranscode ? 'sr-warn' : 'sr-ok', 'tune', 'Mode', s.autoDirectPreTranscode ? 'Auto Direct Pre-Transcode' : 'Manual'),
+                        card(s.configured ? 'sr-ok' : 'sr-warn', 'video_library', 'Libraries', s.configured ? 'Selected' : 'Select libraries to begin'),
+                        card('sr-ok', 'playlist_add_check', 'Needs encoding', String(s.candidateCount || 0)),
+                        card(s.runningCount ? 'sr-warn' : 'sr-ok', 'queue', 'Queue', (s.queuedCount || 0) + ' waiting, ' + (s.runningCount || 0) + ' running'),
+                        card(s.paused ? 'sr-warn' : 'sr-ok', s.paused ? 'pause' : 'play_arrow', 'Worker', s.paused ? 'Paused' : (s.currentJob ? (s.currentJob.Name + ' — ' + Math.round(s.currentJob.Progress) + '%') : 'Idle'))
+                    ];
+                    grid.innerHTML = cards.join('');
+                }).catch(function () {});
+            }
+
+            function card(state, icon, name, detail) {
+                return '<div class="sr-status-card ' + state + '"><i class="material-icons">' + icon + '</i><div><div class="sr-quick-action-title">' + escapeHtml(name) + '</div><div class="sr-status-detail">' + escapeHtml(detail || '') + '</div></div></div>';
+            }
+
+            function loadCandidates() {
+                var type = val('srFilterType').value;
+                var reason = val('srFilterReason').value;
+                var q = [];
+                if (type) q.push('itemType=' + encodeURIComponent(type));
+                if (reason) q.push('reason=' + encodeURIComponent(reason));
+                api('/candidates' + (q.length ? '?' + q.join('&') : '')).then(function (rows) {
+                    visibleCandidates = rows || [];
+                    renderCandidates(visibleCandidates);
+                }).catch(function () {
+                    val('srCandidates').innerHTML = '<div class="sr-empty">Could not load candidates.</div>';
+                });
+            }
+
+            function renderCandidates(rows) {
+                var host = val('srCandidates');
+                if (!rows.length) {
+                    host.innerHTML = '<div class="sr-empty">Nothing needs encoding. Run a scan after saving libraries and compatibility rules.</div>';
+                    return;
+                }
+                var html = '<table class="sr-table"><thead><tr><th></th><th>Title</th><th>Why</th><th>Plan</th><th>Size</th><th></th></tr></thead><tbody>';
+                rows.forEach(function (row) {
+                    html += '<tr><td><input type="checkbox" class="sr-pick" data-id="' + row.id + '"/></td>';
+                    html += '<td><strong>' + escapeHtml(row.name) + '</strong><div class="sr-status-detail">' + escapeHtml((row.seriesName ? row.seriesName + ' · ' : '') + row.itemType + ' · ' + row.container + ' · ' + row.videoCodec + ' / ' + row.audioCodec + ' · ' + row.videoRange) + '</div></td>';
+                    html += '<td>' + (row.reasons || []).map(function (r) { return '<span class="sr-chip">' + escapeHtml(r) + '</span>'; }).join('') + '</td>';
+                    html += '<td><span class="sr-chip sr-' + String(row.plannedAction || '').toLowerCase() + '">' + escapeHtml(row.plannedAction) + '</span></td>';
+                    html += '<td>' + escapeHtml(row.sizeLabel || '') + '</td>';
+                    html += '<td class="sr-row-actions"><button type="button" class="raised raised-mini emby-button sr-encode-one" data-id="' + row.id + '">Encode</button>';
+                    html += '<button type="button" class="raised raised-mini emby-button sr-ignore-one" data-id="' + row.id + '">Ignore</button></td></tr>';
+                });
+                html += '</tbody></table>';
+                host.innerHTML = html;
+            }
+
+            function loadQueue() {
+                api('/queue').then(function (rows) {
+                    var host = val('srQueue');
+                    rows = rows || [];
+                    if (!rows.length) {
+                        host.innerHTML = '<div class="sr-empty">Queue is empty. Encode files from Needs Encoding, or turn on Auto Direct Pre-Transcode.</div>';
+                        return;
+                    }
+                    var html = '<table class="sr-table"><thead><tr><th>Title</th><th>Status</th><th>Progress</th><th></th></tr></thead><tbody>';
+                    rows.forEach(function (row) {
+                        html += '<tr><td><strong>' + escapeHtml(row.name) + '</strong><div class="sr-status-detail">' + escapeHtml(row.action + (row.error ? ' · ' + row.error : '')) + '</div></td>';
+                        html += '<td>' + escapeHtml(row.status) + '</td>';
+                        html += '<td><div class="sr-progress"><span style="width:' + Math.round(row.progress || 0) + '%"></span></div> ' + Math.round(row.progress || 0) + '%</td>';
+                        html += '<td class="sr-row-actions">';
+                        if (row.status === 'Queued' || row.status === 'Running') {
+                            html += '<button type="button" class="raised raised-mini emby-button sr-cancel" data-id="' + row.id + '">Cancel</button>';
+                        }
+                        if (row.status === 'Failed' || row.status === 'Cancelled' || row.status === 'Skipped') {
+                            html += '<button type="button" class="raised raised-mini emby-button sr-retry" data-id="' + row.id + '">Retry</button>';
+                        }
+                        if (row.status === 'Queued') {
+                            html += '<button type="button" class="raised raised-mini emby-button sr-skip" data-id="' + row.id + '">Skip</button>';
+                        }
+                        html += '</td></tr>';
+                    });
+                    html += '</tbody></table>';
+                    host.innerHTML = html;
+                });
+            }
+
+            function pickedIds() {
+                return Array.prototype.slice.call(page.querySelectorAll('.sr-pick:checked')).map(function (el) {
+                    return el.getAttribute('data-id');
+                });
+            }
+
+            function escapeHtml(value) {
+                return String(value || '').replace(/[&<>"']/g, function (ch) {
+                    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+                });
+            }
+
+            page.querySelectorAll('.jellyfin-tab-button').forEach(function (btn) {
+                btn.addEventListener('click', function () { showTab(btn.getAttribute('data-tab')); });
+            });
+            val('StreamReadyForm').addEventListener('submit', saveConfig);
+            val('srScanNow').addEventListener('click', function () {
+                Dashboard.showLoadingMsg();
+                api('/scan', 'POST').then(function (r) {
+                    Dashboard.hideLoadingMsg();
+                    Dashboard.alert('Scan complete. ' + (r.found || 0) + ' file(s) need encoding.');
+                    refreshStatus();
+                    loadCandidates();
+                    showTab('needs');
+                }).catch(function () {
+                    Dashboard.hideLoadingMsg();
+                    Dashboard.alert('Scan failed. Save libraries first.');
+                });
+            });
+            val('srPauseWorker').addEventListener('click', function () { api('/worker/pause', 'POST').then(refreshStatus); });
+            val('srResumeWorker').addEventListener('click', function () { api('/worker/resume', 'POST').then(refreshStatus); });
+            val('srFilterType').addEventListener('change', loadCandidates);
+            val('srFilterReason').addEventListener('change', loadCandidates);
+            val('srEncodeSelected').addEventListener('click', function () {
+                var ids = pickedIds();
+                if (!ids.length) { Dashboard.alert('Select at least one file.'); return; }
+                api('/candidates/encode', 'POST', { Ids: ids }).then(function (r) {
+                    Dashboard.alert('Queued ' + (r.queued || ids.length) + ' file(s).');
+                    showTab('queue');
+                    loadQueue();
+                });
+            });
+            val('srEncodeVisible').addEventListener('click', function () {
+                var ids = visibleCandidates.map(function (c) { return c.id; });
+                if (!ids.length) { Dashboard.alert('Nothing visible to encode.'); return; }
+                api('/candidates/encode', 'POST', { Ids: ids }).then(function (r) {
+                    Dashboard.alert('Queued ' + (r.queued || ids.length) + ' file(s).');
+                    showTab('queue');
+                    loadQueue();
+                });
+            });
+            page.addEventListener('click', function (ev) {
+                var encode = ev.target.closest('.sr-encode-one');
+                var ignore = ev.target.closest('.sr-ignore-one');
+                var cancel = ev.target.closest('.sr-cancel');
+                var retry = ev.target.closest('.sr-retry');
+                var skip = ev.target.closest('.sr-skip');
+                if (encode) api('/candidates/' + encode.getAttribute('data-id') + '/encode', 'POST').then(function () { showTab('queue'); loadQueue(); });
+                if (ignore) api('/candidates/' + ignore.getAttribute('data-id') + '/ignore', 'POST').then(loadCandidates);
+                if (cancel) api('/queue/' + cancel.getAttribute('data-id') + '/cancel', 'POST').then(loadQueue);
+                if (retry) api('/queue/' + retry.getAttribute('data-id') + '/retry', 'POST').then(loadQueue);
+                if (skip) api('/queue/' + skip.getAttribute('data-id') + '/skip', 'POST').then(loadQueue);
+            });
+            val('srToggleDesc').addEventListener('click', function () {
+                var hidden = page.classList.toggle('sr-hide-desc');
+                val('srToggleDesc').textContent = hidden ? 'Descriptions Off' : 'Descriptions On';
+            });
+            val('srSettingsSearchInput').addEventListener('input', function () {
+                var q = val('srSettingsSearchInput').value.toLowerCase();
+                page.querySelectorAll('#StreamReadyForm fieldset').forEach(function (fs) {
+                    fs.style.display = !q || fs.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
+                });
+            });
+            window.addEventListener('scroll', function () {
+                val('srStickyHeader').classList.toggle('sr-is-scrolled', window.scrollY > 8);
+            }, { passive: true });
+
+            function onShow() {
+                detectTheme();
+                loadConfig();
+                if (pollTimer) clearInterval(pollTimer);
+                pollTimer = setInterval(function () {
+                    refreshStatus();
+                    var active = page.querySelector('.jellyfin-tab-content.active');
+                    if (active && active.id === 'queue') loadQueue();
+                    if (active && active.id === 'needs') loadCandidates();
+                }, 4000);
+            }
+
+            page.addEventListener('pageshow', onShow);
+            page.addEventListener('viewshow', onShow);
+        })();
+    </script>
+</div>
+</body>
+</html>
