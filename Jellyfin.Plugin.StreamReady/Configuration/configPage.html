@@ -148,16 +148,14 @@
                                 <input is="emby-input" id="AllowedVideoCodecs" type="text" />
                             </div>
                             <div class="sr-setting-description"><div class="fieldDescription">Example: h264 or h264,hevc</div></div>
-                            <div class="inputContainer">
-                                <label class="inputLabel" for="AllowedAudioCodecs">Allowed audio codecs</label>
-                                <input is="emby-input" id="AllowedAudioCodecs" type="text" />
-                            </div>
-                            <div class="sr-setting-description"><div class="fieldDescription">TrueHD, DTS-HD, and FLAC usually force a transcode on TVs and browsers.</div></div>
-                            <div class="inputContainer">
-                                <label class="inputLabel" for="AllowedVideoRanges">Allowed video ranges</label>
-                                <input is="emby-input" id="AllowedVideoRanges" type="text" />
-                            </div>
-                            <div class="sr-setting-description"><div class="fieldDescription">SDR is safest. Add HDR10 or DOVI only if your clients Direct Play them.</div></div>
+
+                            <div class="inputLabel" style="margin-top:12px;">Allowed audio codecs</div>
+                            <div id="srAudioCodecs" class="sr-check-grid"></div>
+                            <div class="sr-setting-description"><div class="fieldDescription">Uncheck TrueHD / DTS-HD / FLAC if TVs and browsers force a live transcode. Project Hail Mary’s TrueHD would need encoding unless you allow it.</div></div>
+
+                            <div class="inputLabel" style="margin-top:12px;">Allowed video ranges</div>
+                            <div id="srVideoRanges" class="sr-check-grid"></div>
+                            <div class="sr-setting-description"><div class="fieldDescription">Matches Jellyfin’s VideoRangeType. <strong>DOVIWithEL</strong> is Dolby Vision Profile 7 (dual layer) — often not Direct Playable; leave unchecked to convert. SDR alone is the safest default.</div></div>
                         </div>
                     </fieldset>
                     <fieldset>
@@ -332,6 +330,67 @@
             var visibleCandidates = [];
             var scanning = false;
 
+            // Jellyfin VideoRangeType (exact names as reported on items, e.g. DOVIWithEL).
+            var VIDEO_RANGE_OPTIONS = [
+                { id: 'SDR', label: 'SDR' },
+                { id: 'HDR10', label: 'HDR10' },
+                { id: 'HDR10Plus', label: 'HDR10+' },
+                { id: 'HLG', label: 'HLG' },
+                { id: 'DOVI', label: 'Dolby Vision (DOVI)' },
+                { id: 'DOVIWithHDR10', label: 'DV + HDR10 fallback' },
+                { id: 'DOVIWithHLG', label: 'DV + HLG fallback' },
+                { id: 'DOVIWithSDR', label: 'DV + SDR fallback' },
+                { id: 'DOVIWithEL', label: 'DV Profile 7 (DOVIWithEL)' },
+                { id: 'DOVIWithHDR10Plus', label: 'DV + HDR10+' },
+                { id: 'DOVIWithELHDR10Plus', label: 'DV Profile 7 + HDR10+' },
+                { id: 'DOVIInvalid', label: 'DV invalid / odd profile' },
+                { id: 'Unknown', label: 'Unknown' }
+            ];
+
+            var AUDIO_CODEC_OPTIONS = [
+                { id: 'aac', label: 'AAC' },
+                { id: 'ac3', label: 'AC3 (Dolby Digital)' },
+                { id: 'eac3', label: 'E-AC3 (DD+)' },
+                { id: 'mp3', label: 'MP3' },
+                { id: 'opus', label: 'Opus' },
+                { id: 'vorbis', label: 'Vorbis' },
+                { id: 'flac', label: 'FLAC' },
+                { id: 'alac', label: 'ALAC' },
+                { id: 'truehd', label: 'TrueHD' },
+                { id: 'dts', label: 'DTS' },
+                { id: 'dtshd', label: 'DTS-HD / DTS-HD MA' },
+                { id: 'pcm', label: 'PCM' },
+                { id: 'wma', label: 'WMA' },
+                { id: 'mlp', label: 'MLP' }
+            ];
+
+            function splitCsv(value) {
+                return String(value || '')
+                    .split(',')
+                    .map(function (s) { return s.trim(); })
+                    .filter(Boolean);
+            }
+
+            function renderCheckGrid(hostId, options, selectedCsv, className) {
+                var host = val(hostId);
+                if (!host) return;
+                var selected = splitCsv(selectedCsv).map(function (s) { return s.toLowerCase(); });
+                host.innerHTML = options.map(function (opt) {
+                    var checked = selected.indexOf(String(opt.id).toLowerCase()) >= 0 ? ' checked' : '';
+                    return '<div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" class="'
+                        + className + '" data-id="' + escapeHtml(opt.id) + '"' + checked
+                        + '/><span>' + escapeHtml(opt.label) + '</span></label></div>';
+                }).join('');
+            }
+
+            function selectedCheckCsv(className) {
+                var page = getPage();
+                if (!page) return '';
+                return Array.prototype.slice.call(page.querySelectorAll('.' + className + ':checked')).map(function (el) {
+                    return el.getAttribute('data-id');
+                }).join(',');
+            }
+
             function getPage() {
                 return document.getElementById('StreamReadyPage');
             }
@@ -505,7 +564,7 @@
                         var el = val(id);
                         if (el) el.checked = !!config[id];
                     });
-                    ['AllowedContainers', 'AllowedVideoCodecs', 'AllowedAudioCodecs', 'AllowedVideoRanges', 'EncodingPreset', 'HardwareAccel', 'ReplacementPolicy', 'BackupFolder', 'FfmpegPreset'].forEach(function (id) {
+                    ['AllowedContainers', 'AllowedVideoCodecs', 'EncodingPreset', 'HardwareAccel', 'ReplacementPolicy', 'BackupFolder', 'FfmpegPreset'].forEach(function (id) {
                         var el = val(id);
                         if (el && config[id] != null) el.value = config[id];
                     });
@@ -513,6 +572,8 @@
                         var el = val(id);
                         if (el && config[id] != null) el.value = config[id];
                     });
+                    renderCheckGrid('srAudioCodecs', AUDIO_CODEC_OPTIONS, config.AllowedAudioCodecs || 'aac,ac3,eac3,mp3', 'sr-audio-codec');
+                    renderCheckGrid('srVideoRanges', VIDEO_RANGE_OPTIONS, config.AllowedVideoRanges || 'SDR', 'sr-video-range');
                     renderLibraries(libraries, (config.SelectedLibraryIds || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean));
                     Dashboard.hideLoadingMsg();
                     clearDirty();
@@ -556,10 +617,12 @@
                         var el = val(id);
                         if (el) config[id] = !!el.checked;
                     });
-                    ['AllowedContainers', 'AllowedVideoCodecs', 'AllowedAudioCodecs', 'AllowedVideoRanges', 'EncodingPreset', 'HardwareAccel', 'ReplacementPolicy', 'BackupFolder', 'FfmpegPreset'].forEach(function (id) {
+                    ['AllowedContainers', 'AllowedVideoCodecs', 'EncodingPreset', 'HardwareAccel', 'ReplacementPolicy', 'BackupFolder', 'FfmpegPreset'].forEach(function (id) {
                         var el = val(id);
                         if (el) config[id] = el.value;
                     });
+                    config.AllowedAudioCodecs = selectedCheckCsv('sr-audio-codec');
+                    config.AllowedVideoRanges = selectedCheckCsv('sr-video-range');
                     config.MaxFileSizeGiB = parseFloat((val('MaxFileSizeGiB') || {}).value) || 0;
                     config.MaxVideoBitrateMbps = parseFloat((val('MaxVideoBitrateMbps') || {}).value) || 0;
                     config.Crf = parseInt((val('Crf') || {}).value, 10) || 0;

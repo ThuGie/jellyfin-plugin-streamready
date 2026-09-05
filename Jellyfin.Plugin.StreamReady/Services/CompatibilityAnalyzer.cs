@@ -109,6 +109,7 @@ public class CompatibilityAnalyzer
             "h265" or "hev1" or "hvc1" => "hevc",
             "avc" or "avc1" or "x264" => "h264",
             "dca" => "dts",
+            "dts-hd" or "dtshd_ma" or "dtsma" or "dts-hd ma" => "dtshd",
             "mp4a" => "aac",
             _ => value
         };
@@ -146,18 +147,8 @@ public class CompatibilityAnalyzer
 
     private static bool RangeAllowed(string range, HashSet<string> allowed)
     {
-        if (allowed.Contains(range, StringComparer.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        if (range.StartsWith("DOVI", StringComparison.OrdinalIgnoreCase))
-        {
-            return allowed.Contains("dovi", StringComparer.OrdinalIgnoreCase)
-                   || allowed.Contains("dolbyvision", StringComparer.OrdinalIgnoreCase);
-        }
-
-        return false;
+        // Exact VideoRangeType match (SDR, HDR10, DOVIWithEL, …). Each checkbox is independent.
+        return allowed.Contains(range, StringComparer.OrdinalIgnoreCase);
     }
 
     private static long SafeLength(string path)
