@@ -64,6 +64,7 @@ public class StreamReadyController : ControllerBase
         var config = Plugin.Instance?.Configuration;
         var current = _worker.CurrentJob;
         var ffmpegPath = _ffmpeg.EncoderPath;
+        var ffmpegVersion = _ffmpeg.EncoderVersion;
         return new
         {
             enabled = config?.Enabled ?? false,
@@ -73,8 +74,11 @@ public class StreamReadyController : ControllerBase
             lastScanUtc = _scanner.LastScanUtc,
             lastFound = _scanner.LastFound,
             paused = _worker.IsPaused,
-            ffmpegPath,
-            ffmpegReady = !string.IsNullOrWhiteSpace(ffmpegPath) && System.IO.File.Exists(ffmpegPath),
+            ffmpegPath = string.IsNullOrWhiteSpace(ffmpegPath)
+                ? (ffmpegVersion is null ? string.Empty : "ffmpeg " + ffmpegVersion)
+                : ffmpegPath,
+            ffmpegVersion,
+            ffmpegReady = _ffmpeg.IsReady,
             candidateCount = _store.GetCandidates().Count,
             queuedCount = _store.QueuedCount(),
             runningCount = _store.RunningCount(),
@@ -95,12 +99,12 @@ public class StreamReadyController : ControllerBase
     [HttpGet("libraries")]
     public ActionResult<object> GetLibraries()
     {
-        var folders = _libraryManager.GetVirtualFolders()
+        var folders = LibraryCatalog.ListLibraries(_libraryManager)
             .Select(f => new
             {
-                id = f.ItemId,
+                id = f.Id,
                 name = f.Name,
-                collectionType = f.CollectionType?.ToString()
+                collectionType = f.CollectionType
             })
             .ToList();
         return folders;

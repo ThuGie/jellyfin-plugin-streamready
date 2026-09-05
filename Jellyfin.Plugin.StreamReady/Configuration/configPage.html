@@ -458,7 +458,10 @@
                     api('/libraries')
                 ]).then(function (results) {
                     var config = results[0];
-                    var libraries = results[1] || [];
+                    var libraries = results[1];
+                    if (!Array.isArray(libraries)) {
+                        libraries = (libraries && libraries.Items) || (libraries && libraries.items) || [];
+                    }
                     ['Enabled', 'AutoDirectPreTranscode', 'IncludeExtras', 'ToneMapHdr', 'VerifyBeforeReplace', 'PauseDuringPlayback'].forEach(function (id) {
                         var el = val(id);
                         if (el) el.checked = !!config[id];
@@ -487,7 +490,7 @@
                 var host = val('srLibraryList');
                 if (!host) return;
                 if (!libraries.length) {
-                    host.innerHTML = '<div class="sr-empty">No virtual folders found.</div>';
+                    host.innerHTML = '<div class="sr-empty">No libraries found. Open Dashboard → Libraries and confirm movie/TV libraries exist, then reopen this page.</div>';
                     return;
                 }
                 host.innerHTML = libraries.map(function (lib) {
@@ -538,7 +541,7 @@
                     var grid = val('srStatusGrid');
                     if (!grid) return;
                     var cards = [
-                        card(s.ffmpegReady ? 'ok' : 'warn', 'movie_filter', 'FFmpeg', s.ffmpegReady ? s.ffmpegPath : 'Not found', null),
+                        card(s.ffmpegReady ? 'ok' : 'warn', 'movie_filter', 'FFmpeg', s.ffmpegReady ? (s.ffmpegPath || ('v' + (s.ffmpegVersion || ''))) : 'Not found', null),
                         card(s.autoDirectPreTranscode ? 'warn' : 'ok', 'tune', 'Mode', s.autoDirectPreTranscode ? 'Auto Direct Pre-Transcode' : 'Manual', null),
                         card(s.configured ? 'ok' : 'warn', 'video_library', 'Libraries', s.configured ? 'Selected' : 'Select libraries to begin', 'libraries'),
                         card('ok', 'playlist_add_check', 'Needs encoding', String(s.candidateCount || 0), 'needs'),

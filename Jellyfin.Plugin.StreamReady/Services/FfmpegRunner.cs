@@ -31,7 +31,80 @@ public class FfmpegRunner
         _logger = logger;
     }
 
-    public string EncoderPath => _mediaEncoder.EncoderPath;
+    public string EncoderPath
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(_mediaEncoder.EncoderPath))
+            {
+                return _mediaEncoder.EncoderPath;
+            }
+
+            try
+            {
+                var options = _serverConfig.GetEncodingOptions();
+                if (!string.IsNullOrWhiteSpace(options.EncoderAppPath))
+                {
+                    return options.EncoderAppPath;
+                }
+
+                if (!string.IsNullOrWhiteSpace(options.EncoderAppPathDisplay))
+                {
+                    return options.EncoderAppPathDisplay;
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+
+            return string.Empty;
+        }
+    }
+
+    public string? EncoderVersion
+    {
+        get
+        {
+            try
+            {
+                var version = _mediaEncoder.EncoderVersion;
+                return version is null ? null : version.ToString();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+    }
+
+    public bool IsReady
+    {
+        get
+        {
+            try
+            {
+                if (_mediaEncoder.EncoderVersion is not null && _mediaEncoder.EncoderVersion.Major > 0)
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+
+            var path = EncoderPath;
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return false;
+            }
+
+            // Absolute path that exists, or a bare command Jellyfin resolved on PATH
+            // (File.Exists("ffmpeg") is false even when Process.Start works).
+            return File.Exists(path) || path.IndexOf(Path.DirectorySeparatorChar) < 0;
+        }
+    }
 
     public string ProbePath
     {
@@ -87,7 +160,7 @@ public class FfmpegRunner
         CancellationToken cancellationToken)
     {
         var ffmpeg = EncoderPath;
-        if (string.IsNullOrWhiteSpace(ffmpeg))
+        if (string.IsNullOrWhiteSpace(ffmpeg) || !IsReady)
         {
             throw new InvalidOperationException("FFmpeg path is not configured in Jellyfin.");
         }

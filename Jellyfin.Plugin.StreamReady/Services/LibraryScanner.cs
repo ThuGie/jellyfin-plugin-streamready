@@ -177,26 +177,27 @@ public class LibraryScanner
     public List<(Guid Id, string Name, string CollectionType)> ResolveLibraries(PluginConfiguration config)
     {
         var selected = CompatibilityAnalyzer.Split(config.SelectedLibraryIds).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var result = new List<(Guid Id, string Name, string CollectionType)>();
-        foreach (var folder in _libraryManager.GetVirtualFolders())
-        {
-            if (selected.Count > 0 && (string.IsNullOrEmpty(folder.ItemId) || (!selected.Contains(folder.ItemId) && !selected.Contains(folder.ItemId.Replace("-", string.Empty, StringComparison.Ordinal)))))
-            {
-                continue;
-            }
-
-            if (!Guid.TryParse(folder.ItemId, out var id))
-            {
-                continue;
-            }
-
-            var collection = folder.CollectionType?.ToString() ?? string.Empty;
-            result.Add((id, folder.Name, collection));
-        }
-
         if (selected.Count == 0)
         {
             return [];
+        }
+
+        var result = new List<(Guid Id, string Name, string CollectionType)>();
+        foreach (var folder in LibraryCatalog.ListLibraries(_libraryManager))
+        {
+            if (!Guid.TryParse(folder.Id, out var id))
+            {
+                continue;
+            }
+
+            if (!selected.Contains(folder.Id)
+                && !selected.Contains(id.ToString("N"))
+                && !selected.Contains(id.ToString("D")))
+            {
+                continue;
+            }
+
+            result.Add((id, folder.Name, folder.CollectionType));
         }
 
         return result;
