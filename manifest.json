@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/ThuGie/jellyfin-plugin-streamready/main/images/logo.png",
     "versions": [
       {
+        "version": "1.0.2.0",
+        "changelog": "Fix the settings page stylesheet. Dashboard link tags cannot send the Jellyfin API token, so CSS never loaded and the page rendered unstyled. Styles are now injected via an authenticated request, with a ConfigurationPage fallback.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/ThuGie/jellyfin-plugin-streamready/releases/download/v1.0.2.0/jellyfin-plugin-streamready_1.0.2.0.zip",
+        "checksum": "337b04d9d096dadb4974e0b02e3d532b",
+        "timestamp": "2026-09-05T15:27:16Z"
+      },
+      {
         "version": "1.0.1.0",
         "changelog": "Plugin catalog icon (256x256 thumb) and GitHub Actions now write the zip MD5 into manifest.json after each release build.",
         "targetAbi": "10.11.0.0",
