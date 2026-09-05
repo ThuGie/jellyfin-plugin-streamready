@@ -15,6 +15,7 @@ public class StreamReadyController : ControllerBase
     private readonly LibraryScanner _scanner;
     private readonly EncodeWorker _worker;
     private readonly FfmpegRunner _ffmpeg;
+    private readonly ReplacementService _replacement;
     private readonly ILibraryManager _libraryManager;
     private readonly ILogger<StreamReadyController> _logger;
 
@@ -23,6 +24,7 @@ public class StreamReadyController : ControllerBase
         LibraryScanner scanner,
         EncodeWorker worker,
         FfmpegRunner ffmpeg,
+        ReplacementService replacement,
         ILibraryManager libraryManager,
         ILogger<StreamReadyController> logger)
     {
@@ -30,6 +32,7 @@ public class StreamReadyController : ControllerBase
         _scanner = scanner;
         _worker = worker;
         _ffmpeg = ffmpeg;
+        _replacement = replacement;
         _libraryManager = libraryManager;
         _logger = logger;
     }
@@ -96,6 +99,9 @@ public class StreamReadyController : ControllerBase
             candidateCount,
             queuedCount = _store.QueuedCount(),
             runningCount = _store.RunningCount(),
+            encodeWindowEnabled = config?.EncodeWindowEnabled ?? false,
+            encodeWindowOpen = config is null || EncodeWindow.IsOpen(config),
+            encodeWindowLabel = config is null ? "Any time" : EncodeWindow.Describe(config),
             currentJob = current is null
                 ? null
                 : new
@@ -155,6 +161,9 @@ public class StreamReadyController : ControllerBase
     public ActionResult<object> GetCandidates(
         [FromQuery] string? reason,
         [FromQuery] string? itemType,
+        [FromQuery] string? q,
+        [FromQuery] string? sortBy,
+        [FromQuery] string? sortDir,
         [FromQuery] int skip = 0,
         [FromQuery] int limit = 200)
     {
@@ -168,29 +177,18 @@ public class StreamReadyController : ControllerBase
             skip = 0;
         }
 
-        var list = _store.GetCandidates().AsEnumerable();
-        if (!string.IsNullOrWhiteSpace(reason))
-        {
-            list = list.Where(c => c.Reasons.Contains(reason, StringComparer.OrdinalIgnoreCase));
-        }
-
-        if (!string.IsNullOrWhiteSpace(itemType))
-        {
-            list = list.Where(c => c.ItemType.Equals(itemType, StringComparison.OrdinalIgnoreCase));
-        }
-
-        var filtered = list
-            .OrderByDescending(c => c.SizeBytes)
-            .ToList();
+        var filtered = FilterCandidates(reason, itemType, q).ToList();
+        filtered = SortCandidates(filtered, sortBy, sortDir);
         var page = filtered.Skip(skip).Take(limit).Select(MapCandidate).ToList();
         _logger.LogInformation(
-            "StreamReady candidates: total={Total} skip={Skip} limit={Limit} returned={Returned} reason={Reason} itemType={ItemType}",
+            "StreamReady candidates: total={Total} skip={Skip} limit={Limit} returned={Returned} reason={Reason} itemType={ItemType} q={Q}",
             filtered.Count,
             skip,
             limit,
             page.Count,
             reason ?? "",
-            itemType ?? "");
+            itemType ?? "",
+            q ?? "");
         return new
         {
             total = filtered.Count,
@@ -234,21 +232,10 @@ public class StreamReadyController : ControllerBase
     [HttpPost("candidates/encodeMatching")]
     public ActionResult<object> EncodeMatching(
         [FromQuery] string? reason,
-        [FromQuery] string? itemType)
+        [FromQuery] string? itemType,
+        [FromQuery] string? q)
     {
-        var list = _store.GetCandidates().AsEnumerable();
-        if (!string.IsNullOrWhiteSpace(reason))
-        {
-            list = list.Where(c => c.Reasons.Contains(reason, StringComparer.OrdinalIgnoreCase));
-        }
-
-        if (!string.IsNullOrWhiteSpace(itemType))
-        {
-            list = list.Where(c => c.ItemType.Equals(itemType, StringComparison.OrdinalIgnoreCase));
-        }
-
-        var matching = list
-            .OrderByDescending(c => c.SizeBytes)
+        var matching = SortCandidates(FilterCandidates(reason, itemType, q).ToList(), "size", "desc")
             .Take(2000)
             .ToList();
         var jobs = _store.EnqueueMany(matching);
@@ -317,6 +304,87 @@ public class StreamReadyController : ControllerBase
         return Ok();
     }
 
+    [Authorize]
+    [HttpGet("replacements")]
+    public ActionResult<object> GetReplacements()
+    {
+        return _store.GetReplacements().Select(MapReplacement).ToList();
+    }
+
+    [Authorize]
+    [HttpPost("replacements/{id}/restore")]
+    public async Task<ActionResult> RestoreReplacement(string id, CancellationToken cancellationToken)
+    {
+        var record = _store.GetReplacement(id);
+        if (record is null)
+        {
+            return NotFound();
+        }
+
+        try
+        {
+            await _replacement.RestoreAsync(record, cancellationToken).ConfigureAwait(false);
+            _store.MarkRestored(id);
+            return Ok(new { restored = true, id });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "StreamReady restore failed for {Id}", id);
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    private IEnumerable<CandidateRecord> FilterCandidates(string? reason, string? itemType, string? q)
+    {
+        var list = _store.GetCandidates().AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(reason))
+        {
+            list = list.Where(c => c.Reasons.Contains(reason, StringComparer.OrdinalIgnoreCase));
+        }
+
+        if (!string.IsNullOrWhiteSpace(itemType))
+        {
+            list = list.Where(c => c.ItemType.Equals(itemType, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var term = q.Trim();
+            list = list.Where(c =>
+                (c.Name?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (c.SeriesName?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (c.LibraryName?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (c.Path?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (c.Container?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (c.VideoCodec?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (c.AudioCodec?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+                || c.Reasons.Any(r => r.Contains(term, StringComparison.OrdinalIgnoreCase))
+                || c.ReasonDetails.Any(r => r.Contains(term, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        return list;
+    }
+
+    private static List<CandidateRecord> SortCandidates(List<CandidateRecord> list, string? sortBy, string? sortDir)
+    {
+        var asc = string.Equals(sortDir, "asc", StringComparison.OrdinalIgnoreCase);
+        return (sortBy ?? "size").Trim().ToLowerInvariant() switch
+        {
+            "name" => (asc
+                ? list.OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+                : list.OrderByDescending(c => c.Name, StringComparer.OrdinalIgnoreCase)).ToList(),
+            "added" => (asc
+                ? list.OrderBy(c => c.AddedAt)
+                : list.OrderByDescending(c => c.AddedAt)).ToList(),
+            "library" => (asc
+                ? list.OrderBy(c => c.LibraryName, StringComparer.OrdinalIgnoreCase)
+                : list.OrderByDescending(c => c.LibraryName, StringComparer.OrdinalIgnoreCase)).ToList(),
+            _ => (asc
+                ? list.OrderBy(c => c.SizeBytes)
+                : list.OrderByDescending(c => c.SizeBytes)).ToList()
+        };
+    }
+
     private static object MapCandidate(CandidateRecord c)
     {
         return new
@@ -371,8 +439,50 @@ public class StreamReadyController : ControllerBase
             filters = j.Filters,
             videoRange = j.VideoRange,
             speed = j.Speed,
-            eta = j.Eta
+            eta = j.Eta,
+            originalPath = j.OriginalPath,
+            finalPath = j.FinalPath,
+            backupPath = j.BackupPath,
+            replacementPolicy = j.ReplacementPolicy,
+            replacementId = j.ReplacementId,
+            canRestore = CanRestore(j)
         };
+    }
+
+    private static object MapReplacement(ReplacementRecord r)
+    {
+        return new
+        {
+            id = r.Id,
+            itemId = r.ItemId,
+            name = r.Name,
+            originalPath = r.OriginalPath,
+            finalPath = r.FinalPath,
+            backupPath = r.BackupPath,
+            policy = r.Policy,
+            replacedAt = r.ReplacedAt,
+            restored = r.Restored,
+            canRestore = !r.Restored && (
+                string.Equals(r.Policy, "Sidecar", StringComparison.OrdinalIgnoreCase)
+                || (!string.IsNullOrWhiteSpace(r.BackupPath) && System.IO.File.Exists(r.BackupPath)))
+        };
+    }
+
+    private static bool CanRestore(EncodeJob j)
+    {
+        if (j.Status != JobStatus.Done || string.IsNullOrWhiteSpace(j.ReplacementId))
+        {
+            return false;
+        }
+
+        if (string.Equals(j.ReplacementPolicy, "Sidecar", StringComparison.OrdinalIgnoreCase))
+        {
+            return !string.IsNullOrWhiteSpace(j.FinalPath) && System.IO.File.Exists(j.FinalPath);
+        }
+
+        return string.Equals(j.ReplacementPolicy, "Backup", StringComparison.OrdinalIgnoreCase)
+               && !string.IsNullOrWhiteSpace(j.BackupPath)
+               && System.IO.File.Exists(j.BackupPath);
     }
 
     private static string FormatSize(long bytes)

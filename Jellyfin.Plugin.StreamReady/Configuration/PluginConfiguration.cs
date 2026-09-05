@@ -65,6 +65,18 @@ public class PluginConfiguration : BasePluginConfiguration
 
     public bool PauseDuringPlayback { get; set; } = true;
 
+    /// <summary>When true, only start new encodes inside EncodeWindowStart–End on EncodeWindowDays.</summary>
+    public bool EncodeWindowEnabled { get; set; }
+
+    /// <summary>Local server time HH:mm (24h). Overnight wrap supported (e.g. 22:00–06:00).</summary>
+    public string EncodeWindowStart { get; set; } = "22:00";
+
+    /// <summary>Local server time HH:mm (24h).</summary>
+    public string EncodeWindowEnd { get; set; } = "06:00";
+
+    /// <summary>Comma-separated DayOfWeek ints (0=Sunday … 6=Saturday). Empty = every day.</summary>
+    public string EncodeWindowDays { get; set; } = "0,1,2,3,4,5,6";
+
     /// <summary>Persisted worker pause (survives restart).</summary>
     public bool WorkerPaused { get; set; }
 

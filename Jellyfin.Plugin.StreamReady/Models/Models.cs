@@ -113,6 +113,65 @@ public class EncodeJob
 
     /// <summary>Human ETA like "~12m left".</summary>
     public string? Eta { get; set; }
+
+    public string? OriginalPath { get; set; }
+
+    public string? FinalPath { get; set; }
+
+    public string? BackupPath { get; set; }
+
+    public string? ReplacementPolicy { get; set; }
+
+    public string? ReplacementId { get; set; }
+}
+
+public class ProbeInfo
+{
+    public double Duration { get; set; }
+
+    public bool HasVideo { get; set; }
+
+    public bool HasAudio { get; set; }
+
+    public string? VideoCodec { get; set; }
+
+    public int Width { get; set; }
+
+    public int Height { get; set; }
+
+    public long SizeBytes { get; set; }
+}
+
+public class CommitResult
+{
+    public string FinalPath { get; set; } = string.Empty;
+
+    public string OriginalPath { get; set; } = string.Empty;
+
+    public string? BackupPath { get; set; }
+
+    public string Policy { get; set; } = "Backup";
+}
+
+public class ReplacementRecord
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    public string ItemId { get; set; } = string.Empty;
+
+    public string Name { get; set; } = string.Empty;
+
+    public string OriginalPath { get; set; } = string.Empty;
+
+    public string FinalPath { get; set; } = string.Empty;
+
+    public string? BackupPath { get; set; }
+
+    public string Policy { get; set; } = "Backup";
+
+    public DateTime ReplacedAt { get; set; } = DateTime.UtcNow;
+
+    public bool Restored { get; set; }
 }
 
 public class EncodeProgressUpdate
@@ -163,6 +222,8 @@ public class JobStoreState
     public List<EncodeJob> Queue { get; set; } = [];
 
     public List<ProcessedMarker> Processed { get; set; } = [];
+
+    public List<ReplacementRecord> Replacements { get; set; } = [];
 }
 
 public class CompatibilityResult

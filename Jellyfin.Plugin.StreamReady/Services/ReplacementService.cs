@@ -1,4 +1,5 @@
 using Jellyfin.Plugin.StreamReady.Configuration;
+using Jellyfin.Plugin.StreamReady.Models;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Providers;
@@ -26,7 +27,7 @@ public class ReplacementService
         _logger = logger;
     }
 
-    public async Task<string> CommitAsync(
+    public async Task<CommitResult> CommitAsync(
         BaseItem item,
         string originalPath,
         string tempPath,
@@ -38,18 +39,30 @@ public class ReplacementService
         var originalName = Path.GetFileNameWithoutExtension(originalPath);
         var destPath = Path.Combine(originalDir, originalName + destExt);
         var policy = config.ReplacementPolicy ?? "Backup";
+        string? backupPath = null;
 
         if (policy.Equals("Sidecar", StringComparison.OrdinalIgnoreCase))
         {
             destPath = Path.Combine(originalDir, originalName + ".streamready" + destExt);
             File.Move(tempPath, destPath, overwrite: true);
             Refresh(item);
-            return destPath;
+            return new CommitResult
+            {
+                FinalPath = destPath,
+                OriginalPath = originalPath,
+                BackupPath = null,
+                Policy = "Sidecar"
+            };
         }
 
         if (policy.Equals("Backup", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(policy))
         {
-            await BackupOriginalAsync(originalPath, config, cancellationToken).ConfigureAwait(false);
+            backupPath = await BackupOriginalAsync(originalPath, config, cancellationToken).ConfigureAwait(false);
+            policy = "Backup";
+        }
+        else
+        {
+            policy = "Replace";
         }
 
         if (string.Equals(originalPath, destPath, StringComparison.OrdinalIgnoreCase))
@@ -69,10 +82,82 @@ public class ReplacementService
         }
 
         Refresh(item);
-        return destPath;
+        return new CommitResult
+        {
+            FinalPath = destPath,
+            OriginalPath = originalPath,
+            BackupPath = backupPath,
+            Policy = policy
+        };
     }
 
-    private async Task BackupOriginalAsync(string originalPath, PluginConfiguration config, CancellationToken cancellationToken)
+    public async Task RestoreAsync(ReplacementRecord record, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        if (record.Restored)
+        {
+            throw new InvalidOperationException("This replacement was already restored.");
+        }
+
+        var policy = record.Policy ?? "Backup";
+        if (policy.Equals("Sidecar", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!string.IsNullOrWhiteSpace(record.FinalPath) && File.Exists(record.FinalPath))
+            {
+                File.Delete(record.FinalPath);
+                _logger.LogInformation("Removed StreamReady sidecar {Path}", record.FinalPath);
+            }
+
+            RefreshByItemId(record.ItemId);
+            return;
+        }
+
+        if (!policy.Equals("Backup", StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(record.BackupPath)
+            || !File.Exists(record.BackupPath))
+        {
+            throw new InvalidOperationException("No backup file is available to restore.");
+        }
+
+        var restoreTarget = string.IsNullOrWhiteSpace(record.OriginalPath)
+            ? record.FinalPath
+            : record.OriginalPath;
+        if (string.IsNullOrWhiteSpace(restoreTarget))
+        {
+            throw new InvalidOperationException("Original path is unknown.");
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(restoreTarget) ?? ".");
+
+        // Remove the encoded file when it lives at a different path than the original.
+        if (!string.IsNullOrWhiteSpace(record.FinalPath)
+            && File.Exists(record.FinalPath)
+            && !string.Equals(record.FinalPath, restoreTarget, StringComparison.OrdinalIgnoreCase))
+        {
+            File.Delete(record.FinalPath);
+        }
+
+        var tempRestore = restoreTarget + ".streamready.restore";
+        await using (var source = File.OpenRead(record.BackupPath))
+        await using (var target = File.Create(tempRestore))
+        {
+            await source.CopyToAsync(target, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (File.Exists(restoreTarget))
+        {
+            File.Delete(restoreTarget);
+        }
+
+        File.Move(tempRestore, restoreTarget, overwrite: true);
+        _logger.LogInformation(
+            "Restored {Target} from backup {Backup}",
+            restoreTarget,
+            record.BackupPath);
+        RefreshByItemId(record.ItemId);
+    }
+
+    private async Task<string> BackupOriginalAsync(string originalPath, PluginConfiguration config, CancellationToken cancellationToken)
     {
         var folder = config.BackupFolder;
         if (string.IsNullOrWhiteSpace(folder))
@@ -95,6 +180,7 @@ public class ReplacementService
         _logger.LogInformation("Backed up {Original} to {Backup}", originalPath, dest);
 
         PruneBackups(folder, config.BackupRetentionDays);
+        return dest;
     }
 
     private static void PruneBackups(string folder, int retentionDays)
@@ -118,6 +204,20 @@ public class ReplacementService
             {
                 // ignored
             }
+        }
+    }
+
+    private void RefreshByItemId(string itemId)
+    {
+        if (!Guid.TryParse(itemId, out var id))
+        {
+            return;
+        }
+
+        var item = _libraryManager.GetItemById(id);
+        if (item is not null)
+        {
+            Refresh(item);
         }
     }
 

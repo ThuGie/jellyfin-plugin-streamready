@@ -321,7 +321,7 @@ public class JobStore
         }
     }
 
-    public void Complete(string id, string itemId, string path, long sizeBytes)
+    public void Complete(string id, string itemId, string path, long sizeBytes, ReplacementRecord? replacement = null)
     {
         lock (_gate)
         {
@@ -331,6 +331,14 @@ public class JobStore
                 job.Status = JobStatus.Done;
                 job.Progress = 100;
                 job.FinishedAt = DateTime.UtcNow;
+                if (replacement is not null)
+                {
+                    job.OriginalPath = replacement.OriginalPath;
+                    job.FinalPath = replacement.FinalPath;
+                    job.BackupPath = replacement.BackupPath;
+                    job.ReplacementPolicy = replacement.Policy;
+                    job.ReplacementId = replacement.Id;
+                }
             }
 
             _state.Candidates.RemoveAll(c => c.ItemId == itemId);
@@ -341,6 +349,61 @@ public class JobStore
                 Path = path,
                 SizeBytes = sizeBytes
             });
+
+            if (replacement is not null)
+            {
+                _state.Replacements ??= [];
+                _state.Replacements.RemoveAll(r => r.ItemId == itemId && !r.Restored);
+                _state.Replacements.Insert(0, replacement);
+                if (_state.Replacements.Count > 500)
+                {
+                    _state.Replacements = _state.Replacements.Take(500).ToList();
+                }
+            }
+
+            SaveLocked();
+        }
+    }
+
+    public IReadOnlyList<ReplacementRecord> GetReplacements(bool includeRestored = false)
+    {
+        lock (_gate)
+        {
+            return _state.Replacements
+                .Where(r => includeRestored || !r.Restored)
+                .Select(CloneReplacement)
+                .ToList();
+        }
+    }
+
+    public ReplacementRecord? GetReplacement(string id)
+    {
+        lock (_gate)
+        {
+            var rec = _state.Replacements.FirstOrDefault(r => r.Id == id);
+            return rec is null ? null : CloneReplacement(rec);
+        }
+    }
+
+    public void MarkRestored(string id)
+    {
+        lock (_gate)
+        {
+            var rec = _state.Replacements.FirstOrDefault(r => r.Id == id);
+            if (rec is null)
+            {
+                return;
+            }
+
+            rec.Restored = true;
+            _state.Processed.RemoveAll(p => p.ItemId == rec.ItemId);
+            var job = _state.Queue.FirstOrDefault(j => j.ReplacementId == id);
+            if (job is not null)
+            {
+                job.StatusDetail = (job.StatusDetail ?? string.Empty) + " · restored";
+                job.BackupPath = null;
+            }
+
             SaveLocked();
         }
     }
@@ -465,6 +528,10 @@ public class JobStore
 
             var json = File.ReadAllText(path);
             _state = JsonSerializer.Deserialize<JobStoreState>(json, _json) ?? new JobStoreState();
+            _state.Replacements ??= [];
+            _state.Candidates ??= [];
+            _state.Queue ??= [];
+            _state.Processed ??= [];
             foreach (var job in _state.Queue.Where(j => j.Status == JobStatus.Running))
             {
                 job.Status = JobStatus.Queued;
@@ -559,7 +626,28 @@ public class JobStore
             ToneMap = source.ToneMap,
             Filters = source.Filters,
             Speed = source.Speed,
-            Eta = source.Eta
+            Eta = source.Eta,
+            OriginalPath = source.OriginalPath,
+            FinalPath = source.FinalPath,
+            BackupPath = source.BackupPath,
+            ReplacementPolicy = source.ReplacementPolicy,
+            ReplacementId = source.ReplacementId
+        };
+    }
+
+    private static ReplacementRecord CloneReplacement(ReplacementRecord source)
+    {
+        return new ReplacementRecord
+        {
+            Id = source.Id,
+            ItemId = source.ItemId,
+            Name = source.Name,
+            OriginalPath = source.OriginalPath,
+            FinalPath = source.FinalPath,
+            BackupPath = source.BackupPath,
+            Policy = source.Policy,
+            ReplacedAt = source.ReplacedAt,
+            Restored = source.Restored
         };
     }
 }

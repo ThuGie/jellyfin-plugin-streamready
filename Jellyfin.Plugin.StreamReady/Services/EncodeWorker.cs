@@ -151,6 +151,11 @@ public class EncodeWorker : BackgroundService
             return;
         }
 
+        if (!EncodeWindow.IsOpen(config))
+        {
+            return;
+        }
+
         var max = Math.Clamp(config.MaxConcurrentJobs, 1, 2);
         if (_store.RunningCount() >= max)
         {
@@ -296,24 +301,53 @@ public class EncodeWorker : BackgroundService
 
             if (config.VerifyBeforeReplace)
             {
-                var outDuration = await _ffmpeg.ProbeDurationAsync(tempPath, jobCts.Token).ConfigureAwait(false);
-                if (duration > 0 && outDuration > 0)
-                {
-                    var delta = Math.Abs(outDuration - duration);
-                    if (delta > Math.Max(2, duration * 0.02))
-                    {
-                        TryDelete(tempPath);
-                        _store.Fail(job.Id, $"Duration mismatch (source {duration:0}s, output {outDuration:0}s)");
-                        return;
-                    }
-                }
-
-                if (!File.Exists(tempPath) || new FileInfo(tempPath).Length < 1024)
+                var probe = await _ffmpeg.ProbeMediaAsync(tempPath, jobCts.Token).ConfigureAwait(false);
+                if (!File.Exists(tempPath) || probe.SizeBytes < 1024)
                 {
                     TryDelete(tempPath);
                     _store.Fail(job.Id, "Output file is missing or too small");
                     return;
                 }
+
+                if (!probe.HasVideo)
+                {
+                    TryDelete(tempPath);
+                    _store.Fail(
+                        job.Id,
+                        "Output has no video stream",
+                        $"probe size={probe.SizeBytes} duration={probe.Duration:0.###} hasAudio={probe.HasAudio}");
+                    return;
+                }
+
+                if (probe.Width <= 0 || probe.Height <= 0)
+                {
+                    TryDelete(tempPath);
+                    _store.Fail(
+                        job.Id,
+                        "Output video has invalid dimensions",
+                        $"codec={probe.VideoCodec} {probe.Width}x{probe.Height}");
+                    return;
+                }
+
+                if (duration > 0 && probe.Duration > 0)
+                {
+                    var delta = Math.Abs(probe.Duration - duration);
+                    if (delta > Math.Max(2, duration * 0.02))
+                    {
+                        TryDelete(tempPath);
+                        _store.Fail(
+                            job.Id,
+                            $"Duration mismatch (source {duration:0}s, output {probe.Duration:0}s)",
+                            $"video={probe.VideoCodec} {probe.Width}x{probe.Height} size={probe.SizeBytes}");
+                        return;
+                    }
+                }
+            }
+            else if (!File.Exists(tempPath) || new FileInfo(tempPath).Length < 1024)
+            {
+                TryDelete(tempPath);
+                _store.Fail(job.Id, "Output file is missing or too small");
+                return;
             }
 
             if (config.DiscardIfOutputLarger && File.Exists(tempPath) && File.Exists(sourcePath))
@@ -338,11 +372,27 @@ public class EncodeWorker : BackgroundService
                 return;
             }
 
-            var finalPath = await _replacement.CommitAsync(item, sourcePath, tempPath, config, jobCts.Token)
+            var commit = await _replacement.CommitAsync(item, sourcePath, tempPath, config, jobCts.Token)
                 .ConfigureAwait(false);
+            var finalPath = commit.FinalPath;
             var finalSize = File.Exists(finalPath) ? new FileInfo(finalPath).Length : 0;
-            _store.Complete(job.Id, job.ItemId, finalPath, finalSize);
-            _logger.LogInformation("StreamReady finished {Name} -> {Path}", item.Name, finalPath);
+            var replacement = new ReplacementRecord
+            {
+                ItemId = job.ItemId,
+                Name = job.Name,
+                OriginalPath = commit.OriginalPath,
+                FinalPath = commit.FinalPath,
+                BackupPath = commit.BackupPath,
+                Policy = commit.Policy,
+                ReplacedAt = DateTime.UtcNow
+            };
+            _store.Complete(job.Id, job.ItemId, finalPath, finalSize, replacement);
+            _logger.LogInformation(
+                "StreamReady finished {Name} -> {Path} (policy={Policy}, backup={Backup})",
+                item.Name,
+                finalPath,
+                commit.Policy,
+                commit.BackupPath ?? "(none)");
         }
         catch (OperationCanceledException)
         {

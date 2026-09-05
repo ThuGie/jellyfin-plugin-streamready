@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Jellyfin.Plugin.StreamReady.Configuration;
 using Jellyfin.Plugin.StreamReady.Models;
@@ -153,22 +154,90 @@ public class FfmpegRunner
 
     public async Task<double> ProbeDurationAsync(string path, CancellationToken cancellationToken)
     {
+        var info = await ProbeMediaAsync(path, cancellationToken).ConfigureAwait(false);
+        return info.Duration;
+    }
+
+    public async Task<ProbeInfo> ProbeMediaAsync(string path, CancellationToken cancellationToken)
+    {
+        var info = new ProbeInfo();
+        if (File.Exists(path))
+        {
+            try
+            {
+                info.SizeBytes = new FileInfo(path).Length;
+            }
+            catch
+            {
+                // ignored
+            }
+        }
+
         var probe = ProbePath;
         if (string.IsNullOrWhiteSpace(probe) || !File.Exists(path))
         {
-            return 0;
+            return info;
         }
 
-        var args = $"-v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {Quote(path)}";
+        var args =
+            "-v error -show_entries format=duration " +
+            "-show_entries stream=codec_type,codec_name,width,height " +
+            "-of json " + Quote(path);
         var (exit, stdout, _) = await RunProcessAsync(probe, args, null, null, cancellationToken).ConfigureAwait(false);
-        if (exit != 0)
+        if (exit != 0 || string.IsNullOrWhiteSpace(stdout))
         {
-            return 0;
+            return info;
         }
 
-        return double.TryParse(stdout.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var duration)
-            ? duration
-            : 0;
+        try
+        {
+            using var doc = JsonDocument.Parse(stdout);
+            if (doc.RootElement.TryGetProperty("format", out var format)
+                && format.TryGetProperty("duration", out var durationEl)
+                && double.TryParse(durationEl.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var duration))
+            {
+                info.Duration = duration;
+            }
+
+            if (doc.RootElement.TryGetProperty("streams", out var streams)
+                && streams.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var stream in streams.EnumerateArray())
+                {
+                    var type = stream.TryGetProperty("codec_type", out var typeEl)
+                        ? typeEl.GetString()
+                        : null;
+                    if (string.Equals(type, "video", StringComparison.OrdinalIgnoreCase))
+                    {
+                        info.HasVideo = true;
+                        if (stream.TryGetProperty("codec_name", out var codecEl))
+                        {
+                            info.VideoCodec = codecEl.GetString();
+                        }
+
+                        if (stream.TryGetProperty("width", out var w) && w.TryGetInt32(out var width))
+                        {
+                            info.Width = width;
+                        }
+
+                        if (stream.TryGetProperty("height", out var h) && h.TryGetInt32(out var height))
+                        {
+                            info.Height = height;
+                        }
+                    }
+                    else if (string.Equals(type, "audio", StringComparison.OrdinalIgnoreCase))
+                    {
+                        info.HasAudio = true;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "StreamReady probe parse failed for {Path}", path);
+        }
+
+        return info;
     }
 
     public async Task EncodeAsync(

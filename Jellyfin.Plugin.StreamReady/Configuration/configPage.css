@@ -2383,6 +2383,43 @@ div#bazarrMappingsValidationResult {
     background: var(--primary-accent-color, #00a4dc);
 }
 
+.sr-policy-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.sr-policy-card {
+    text-align: left;
+    border: 1px solid var(--sr-border);
+    border-radius: 10px;
+    background: var(--sr-surface-1);
+    color: inherit;
+    padding: 12px 14px;
+    cursor: pointer;
+}
+
+.sr-policy-card:hover {
+    background: var(--sr-surface-2);
+}
+
+.sr-policy-card.sr-policy-active {
+    border-color: var(--primary-accent-color, #00a4dc);
+    box-shadow: inset 3px 0 0 var(--primary-accent-color, #00a4dc);
+}
+
+.sr-policy-title {
+    font-weight: 650;
+    margin-bottom: 6px;
+}
+
+.sr-policy-detail {
+    font-size: 0.85em;
+    color: var(--sr-text-subtle);
+    line-height: 1.45;
+}
+
 .sr-library-list {
     display: grid;
     gap: 8px;

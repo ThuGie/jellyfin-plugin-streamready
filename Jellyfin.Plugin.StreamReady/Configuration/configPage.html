@@ -95,6 +95,7 @@
                                     <i class="material-icons" aria-hidden="true">search</i>
                                     Scan now
                                 </button>
+                                <input is="emby-input" id="srSearchQ" type="text" placeholder="Search title, path, codec…" style="max-width:220px;" />
                                 <select is="emby-select" id="srFilterType">
                                     <option value="">All types</option>
                                     <option value="Movie">Movies</option>
@@ -108,6 +109,16 @@
                                     <option value="Audio">Audio</option>
                                     <option value="Size">Size</option>
                                     <option value="Bitrate">Bitrate</option>
+                                </select>
+                                <select is="emby-select" id="srSortBy">
+                                    <option value="size">Sort: size</option>
+                                    <option value="name">Sort: name</option>
+                                    <option value="added">Sort: added</option>
+                                    <option value="library">Sort: library</option>
+                                </select>
+                                <select is="emby-select" id="srSortDir">
+                                    <option value="desc">Desc</option>
+                                    <option value="asc">Asc</option>
                                 </select>
                                 <button type="button" class="raised emby-button" id="srEncodeSelected">Encode selected</button>
                                 <button type="button" class="raised emby-button" id="srEncodeVisible">Encode all visible</button>
@@ -262,19 +273,26 @@
                 <div id="replacement" class="jellyfin-tab-content" data-tab="replacement">
                     <div class="sr-note-banner">
                         <i class="material-icons sr-info-icon">warning_amber</i>
-                        <div>Rewriting files on disk can confuse Radarr/Sonarr quality profiles. Backup mode is the recommended default.</div>
+                        <div>Rewriting files on disk can confuse Radarr/Sonarr quality profiles. Prefer <strong>Replace + backup</strong> or <strong>Alternate version</strong> (sidecar).</div>
                     </div>
                     <fieldset>
-                        <legend class="sectionTitle"><i class="material-icons sr-legend-icon">swap_horiz</i>After a successful encode</legend>
+                        <legend class="sectionTitle"><i class="material-icons sr-legend-icon">swap_horiz</i>How to write the result</legend>
                         <div class="configSection">
-                            <div class="selectContainer">
-                                <label class="inputLabel" for="ReplacementPolicy">Replacement policy</label>
-                                <select is="emby-select" id="ReplacementPolicy">
-                                    <option value="Backup">Replace original, keep a backup</option>
-                                    <option value="Replace">Replace original, delete after verify</option>
-                                    <option value="Sidecar">Keep original, write a .streamready sidecar</option>
-                                </select>
+                            <div class="sr-policy-grid" id="srPolicyGrid" role="radiogroup" aria-label="Replacement policy">
+                                <button type="button" class="sr-policy-card" data-policy="Backup">
+                                    <div class="sr-policy-title">Replace + backup</div>
+                                    <div class="sr-policy-detail">Overwrite the library file. Keep a copy under .streamready-backup so you can Restore later. Recommended default.</div>
+                                </button>
+                                <button type="button" class="sr-policy-card" data-policy="Sidecar">
+                                    <div class="sr-policy-title">Alternate version</div>
+                                    <div class="sr-policy-detail">Never touch the original. Write <code>Name.streamready.mp4</code> beside it. Restore = delete the sidecar. Best when Arr manages quality.</div>
+                                </button>
+                                <button type="button" class="sr-policy-card" data-policy="Replace">
+                                    <div class="sr-policy-title">Replace in place</div>
+                                    <div class="sr-policy-detail">Overwrite with no backup. Fastest but no undo. Use only if you already have offline copies.</div>
+                                </button>
                             </div>
+                            <input type="hidden" id="ReplacementPolicy" value="Backup" />
                             <div class="inputContainer">
                                 <label class="inputLabel" for="BackupFolder">Backup folder (empty = .streamready-backup next to the file)</label>
                                 <input is="emby-input" id="BackupFolder" type="text" />
@@ -283,8 +301,15 @@
                                 <label class="inputLabel" for="BackupRetentionDays">Backup retention (days, 0 = keep forever)</label>
                                 <input is="emby-input" id="BackupRetentionDays" type="number" min="0" />
                             </div>
-                            <div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" id="VerifyBeforeReplace"/><span>Verify duration before replacing</span></label></div>
+                            <div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" id="VerifyBeforeReplace"/><span>Verify output before replacing (duration, video stream, dimensions)</span></label></div>
                             <div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" id="DiscardIfOutputLarger"/><span>Discard encode if output is larger than the source</span></label></div>
+                        </div>
+                    </fieldset>
+                    <fieldset class="sr-fieldset-wide">
+                        <legend class="sectionTitle"><i class="material-icons sr-legend-icon">history</i>Recent replacements</legend>
+                        <div class="configSection">
+                            <div class="sr-setting-description"><div class="fieldDescription">Restore puts the backup back (or removes a sidecar). Silent — no notifications.</div></div>
+                            <div id="srReplacements" class="sr-table-wrap"></div>
                         </div>
                     </fieldset>
                 </div>
@@ -310,6 +335,23 @@
                             <div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" id="PauseDuringPlayback"/><span>Pause encoding while anyone is playing media</span></label></div>
                         </div>
                     </fieldset>
+                    <fieldset>
+                        <legend class="sectionTitle"><i class="material-icons sr-legend-icon">nightlight</i>Encode window</legend>
+                        <div class="configSection">
+                            <div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" id="EncodeWindowEnabled"/><span>Only start new encodes inside this window (server local time)</span></label></div>
+                            <div class="sr-setting-description"><div class="fieldDescription">A job already running finishes. Overnight wrap is supported (e.g. 22:00–06:00).</div></div>
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="EncodeWindowStart">Window start (HH:mm)</label>
+                                <input is="emby-input" id="EncodeWindowStart" type="text" placeholder="22:00" />
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="EncodeWindowEnd">Window end (HH:mm)</label>
+                                <input is="emby-input" id="EncodeWindowEnd" type="text" placeholder="06:00" />
+                            </div>
+                            <div class="inputLabel" style="margin-top:8px;">Days</div>
+                            <div id="srEncodeDays" class="sr-check-grid"></div>
+                        </div>
+                    </fieldset>
                 </div>
 
                 <div id="docs" class="jellyfin-tab-content" data-tab="docs">
@@ -319,6 +361,8 @@
                             <p>Jellyfin live-transcodes when a client cannot Direct Play the container, video codec, HDR range, or audio codec. StreamReady does that work ahead of time and writes a stream-friendly file.</p>
                             <p><strong>Manual:</strong> Scan → review Needs Encoding → Encode one or selected files.</p>
                             <p><strong>Auto Direct Pre-Transcode:</strong> Scan results go straight into the queue. Still one encode at a time, still skips files that are playing.</p>
+                            <p><strong>Encode window:</strong> optionally only start new jobs overnight (server local time). Running jobs finish.</p>
+                            <p><strong>Alternate version:</strong> Sidecar mode writes <code>.streamready</code> next to the original; Restore removes it. Backup mode can Restore from <code>.streamready-backup</code>.</p>
                             <p>Smart planning remuxes when only the container is wrong, copies video when only audio is wrong, and fully encodes for HEVC 10-bit, Dolby Vision, or oversized files.</p>
                             <p>Install via a custom catalog: Dashboard → Plugins → Repositories, then add this plugin’s <code>manifest.json</code> URL from the GitHub repository.</p>
                         </div>
@@ -403,6 +447,18 @@
                 { id: 'wma', label: 'WMA' },
                 { id: 'mlp', label: 'MLP' }
             ];
+
+            var ENCODE_DAY_OPTIONS = [
+                { id: '1', label: 'Mon' },
+                { id: '2', label: 'Tue' },
+                { id: '3', label: 'Wed' },
+                { id: '4', label: 'Thu' },
+                { id: '5', label: 'Fri' },
+                { id: '6', label: 'Sat' },
+                { id: '0', label: 'Sun' }
+            ];
+
+            var searchTimer = null;
 
             function splitCsv(value) {
                 return String(value || '')
@@ -563,6 +619,7 @@
                 });
                 if (id === 'needs') loadCandidates(true);
                 if (id === 'queue') loadQueue();
+                if (id === 'replacement') loadReplacements();
             }
 
             function normalizeLibraries(raw) {
@@ -600,14 +657,15 @@
                 ]).then(function (results) {
                     var config = results[0];
                     var libraries = normalizeLibraries(results[1]);
-                    ['Enabled', 'AutoDirectPreTranscode', 'IncludeExtras', 'ToneMapHdr', 'VerifyBeforeReplace', 'PauseDuringPlayback', 'KeepAllAudioAndSubtitles', 'DiscardIfOutputLarger'].forEach(function (id) {
+                    ['Enabled', 'AutoDirectPreTranscode', 'IncludeExtras', 'ToneMapHdr', 'VerifyBeforeReplace', 'PauseDuringPlayback', 'KeepAllAudioAndSubtitles', 'DiscardIfOutputLarger', 'EncodeWindowEnabled'].forEach(function (id) {
                         var el = val(id);
                         if (el) el.checked = !!config[id];
                     });
-                    ['EncodingPreset', 'HardwareAccel', 'ReplacementPolicy', 'BackupFolder', 'FfmpegPreset', 'OutputContainer'].forEach(function (id) {
+                    ['EncodingPreset', 'HardwareAccel', 'BackupFolder', 'FfmpegPreset', 'OutputContainer', 'EncodeWindowStart', 'EncodeWindowEnd'].forEach(function (id) {
                         var el = val(id);
                         if (el && config[id] != null) el.value = config[id];
                     });
+                    setReplacementPolicy(config.ReplacementPolicy || 'Backup');
                     ['MaxFileSizeGiB', 'MaxVideoBitrateMbps', 'Crf', 'ResolutionCap', 'AudioChannels', 'BackupRetentionDays', 'ScanIntervalHours', 'MaxConcurrentJobs', 'ItemSettleDelaySeconds'].forEach(function (id) {
                         var el = val(id);
                         if (el && config[id] != null) el.value = config[id];
@@ -618,16 +676,33 @@
                     renderCheckGrid('srVideoCodecs', VIDEO_CODEC_OPTIONS, config.AllowedVideoCodecs || 'h264', 'sr-video-codec');
                     renderCheckGrid('srAudioCodecs', AUDIO_CODEC_OPTIONS, config.AllowedAudioCodecs || 'aac,ac3,eac3,mp3', 'sr-audio-codec');
                     renderCheckGrid('srVideoRanges', VIDEO_RANGE_OPTIONS, config.AllowedVideoRanges || 'SDR', 'sr-video-range');
+                    renderCheckGrid('srEncodeDays', ENCODE_DAY_OPTIONS, config.EncodeWindowDays || '0,1,2,3,4,5,6', 'sr-encode-day');
                     renderLibraries(libraries, (config.SelectedLibraryIds || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean));
                     Dashboard.hideLoadingMsg();
                     clearDirty();
                     refreshStatus();
                     loadCandidates(true);
                     loadQueue();
+                    loadReplacements();
                 }).catch(function () {
                     Dashboard.hideLoadingMsg();
                     Dashboard.alert('Failed to load StreamReady settings');
                 });
+            }
+
+            function setReplacementPolicy(policy) {
+                var hidden = val('ReplacementPolicy');
+                if (hidden) hidden.value = policy || 'Backup';
+                var page = getPage();
+                if (!page) return;
+                Array.prototype.slice.call(page.querySelectorAll('.sr-policy-card')).forEach(function (card) {
+                    card.classList.toggle('sr-policy-active', card.getAttribute('data-policy') === (policy || 'Backup'));
+                });
+            }
+
+            function getReplacementPolicy() {
+                var hidden = val('ReplacementPolicy');
+                return hidden ? (hidden.value || 'Backup') : 'Backup';
             }
 
             function overridePresetFor(libraryId) {
@@ -689,18 +764,20 @@
                 if (e) e.preventDefault();
                 Dashboard.showLoadingMsg();
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-                    ['Enabled', 'AutoDirectPreTranscode', 'IncludeExtras', 'ToneMapHdr', 'VerifyBeforeReplace', 'PauseDuringPlayback', 'KeepAllAudioAndSubtitles', 'DiscardIfOutputLarger'].forEach(function (id) {
+                    ['Enabled', 'AutoDirectPreTranscode', 'IncludeExtras', 'ToneMapHdr', 'VerifyBeforeReplace', 'PauseDuringPlayback', 'KeepAllAudioAndSubtitles', 'DiscardIfOutputLarger', 'EncodeWindowEnabled'].forEach(function (id) {
                         var el = val(id);
                         if (el) config[id] = !!el.checked;
                     });
-                    ['EncodingPreset', 'HardwareAccel', 'ReplacementPolicy', 'BackupFolder', 'FfmpegPreset', 'OutputContainer'].forEach(function (id) {
+                    ['EncodingPreset', 'HardwareAccel', 'BackupFolder', 'FfmpegPreset', 'OutputContainer', 'EncodeWindowStart', 'EncodeWindowEnd'].forEach(function (id) {
                         var el = val(id);
                         if (el) config[id] = el.value;
                     });
+                    config.ReplacementPolicy = getReplacementPolicy();
                     config.AllowedContainers = selectedCheckCsv('sr-container');
                     config.AllowedVideoCodecs = selectedCheckCsv('sr-video-codec');
                     config.AllowedAudioCodecs = selectedCheckCsv('sr-audio-codec');
                     config.AllowedVideoRanges = selectedCheckCsv('sr-video-range');
+                    config.EncodeWindowDays = selectedCheckCsv('sr-encode-day') || '0,1,2,3,4,5,6';
                     config.MaxFileSizeGiB = parseFloat((val('MaxFileSizeGiB') || {}).value) || 0;
                     config.MaxVideoBitrateMbps = parseFloat((val('MaxVideoBitrateMbps') || {}).value) || 0;
                     config.Crf = parseInt((val('Crf') || {}).value, 10) || 0;
@@ -746,6 +823,10 @@
                     var queuedCount = pick(s, 'queuedCount') || 0;
                     var runningCount = pick(s, 'runningCount') || 0;
                     var paused = !!pick(s, 'paused');
+                    var windowEnabled = !!pick(s, 'encodeWindowEnabled');
+                    var windowOpen = pick(s, 'encodeWindowOpen');
+                    if (windowOpen == null) windowOpen = true;
+                    var windowLabel = pick(s, 'encodeWindowLabel') || 'Any time';
                     var currentJob = pick(s, 'currentJob');
                     var pct = currentJob ? Math.round(pick(currentJob, 'progress') || 0) : 0;
                     var eta = currentJob ? (pick(currentJob, 'eta') || '') : '';
@@ -755,6 +836,8 @@
                         : (currentJob
                             ? ((pick(currentJob, 'name') || 'Job') + ' — ' + pct + '%' + (eta ? ' · ' + eta : '') + (speed ? ' · ' + speed : ''))
                             : 'Idle');
+                    var windowState = !windowEnabled ? 'ok' : (windowOpen ? 'ok' : 'warn');
+                    var windowDetail = !windowEnabled ? 'Any time' : ((windowOpen ? 'Open · ' : 'Closed · ') + windowLabel);
                     var cards = [
                         card(ready ? 'ok' : 'warn', 'movie_filter', 'FFmpeg', ready ? ((version ? 'v' + version + ' · ' : '') + (path || 'ready')) : 'Not found', null),
                         card(ready && hw.indexOf('Software') < 0 ? 'ok' : (ready ? 'warn' : 'warn'), 'memory', 'Hardware', hw, 'encoding'),
@@ -762,7 +845,8 @@
                         card(pick(s, 'configured') ? 'ok' : 'warn', 'video_library', 'Libraries', pick(s, 'configured') ? 'Selected' : 'Select libraries to begin', 'libraries'),
                         card(candidateCount ? 'ok' : 'warn', 'playlist_add_check', 'Needs encoding', String(candidateCount), 'needs'),
                         card(runningCount ? 'warn' : 'ok', 'queue', 'Queue', queuedCount + ' waiting, ' + runningCount + ' running', 'queue'),
-                        card(paused ? 'warn' : 'ok', paused ? 'pause' : 'play_arrow', 'Worker', workerDetail, 'queue')
+                        card(paused ? 'warn' : 'ok', paused ? 'pause' : 'play_arrow', 'Worker', workerDetail, 'queue'),
+                        card(windowState, 'nightlight', 'Encode window', windowDetail, 'schedule')
                     ];
                     grid.innerHTML = cards.join('');
 
@@ -809,18 +893,25 @@
                 }
                 var typeEl = val('srFilterType');
                 var reasonEl = val('srFilterReason');
+                var searchEl = val('srSearchQ');
+                var sortByEl = val('srSortBy');
+                var sortDirEl = val('srSortDir');
                 var type = typeEl ? typeEl.value : '';
                 var reason = reasonEl ? reasonEl.value : '';
+                var q = searchEl ? (searchEl.value || '').trim() : '';
+                var sortBy = sortByEl ? sortByEl.value : 'size';
+                var sortDir = sortDirEl ? sortDirEl.value : 'desc';
                 var limit = candidatesPageSize;
                 var skip = candidatesSkip;
                 if (reset === 'soft') {
                     limit = Math.max(candidatesPageSize, visibleCandidates.length || candidatesPageSize);
                     skip = 0;
                 }
-                var q = ['limit=' + limit, 'skip=' + skip];
-                if (type) q.push('itemType=' + encodeURIComponent(type));
-                if (reason) q.push('reason=' + encodeURIComponent(reason));
-                api('/candidates?' + q.join('&')).then(function (payload) {
+                var qs = ['limit=' + limit, 'skip=' + skip, 'sortBy=' + encodeURIComponent(sortBy), 'sortDir=' + encodeURIComponent(sortDir)];
+                if (type) qs.push('itemType=' + encodeURIComponent(type));
+                if (reason) qs.push('reason=' + encodeURIComponent(reason));
+                if (q) qs.push('q=' + encodeURIComponent(q));
+                api('/candidates?' + qs.join('&')).then(function (payload) {
                     var rows = [];
                     var total = 0;
                     payload = parseJsonPayload(payload);
@@ -918,10 +1009,47 @@
                         if (row.status === 'Queued') {
                             html += '<button type="button" class="raised raised-mini emby-button sr-skip" data-id="' + row.id + '">Skip</button>';
                         }
+                        if (pick(row, 'canRestore') && pick(row, 'replacementId')) {
+                            html += '<button type="button" class="raised raised-mini emby-button sr-restore" data-id="' + pick(row, 'replacementId') + '">Restore</button>';
+                        }
                         html += '</td></tr>';
                     });
                     html += '</tbody></table>';
                     host.innerHTML = html;
+                });
+            }
+
+            function loadReplacements() {
+                api('/replacements').then(function (rows) {
+                    var host = val('srReplacements');
+                    if (!host) return;
+                    rows = parseJsonPayload(rows) || [];
+                    if (!Array.isArray(rows)) rows = [];
+                    if (!rows.length) {
+                        host.innerHTML = '<div class="sr-empty">No replacements yet. After a successful Backup or Alternate encode, Restore appears here.</div>';
+                        return;
+                    }
+                    var html = '<table class="sr-table"><thead><tr><th>Title</th><th>Policy</th><th>When</th><th></th></tr></thead><tbody>';
+                    rows.forEach(function (row) {
+                        var when = pick(row, 'replacedAt') || '';
+                        try { when = new Date(when).toLocaleString(); } catch (e) {}
+                        html += '<tr><td><strong>' + escapeHtml(pick(row, 'name') || '') + '</strong>'
+                            + '<div class="sr-service-detail">' + escapeHtml(pick(row, 'finalPath') || '') + '</div></td>';
+                        html += '<td>' + escapeHtml(pick(row, 'policy') || '') + '</td>';
+                        html += '<td>' + escapeHtml(when) + '</td>';
+                        html += '<td class="sr-row-actions">';
+                        if (pick(row, 'canRestore')) {
+                            html += '<button type="button" class="raised raised-mini emby-button sr-restore" data-id="' + pick(row, 'id') + '">Restore</button>';
+                        } else {
+                            html += '<span class="sr-service-detail">—</span>';
+                        }
+                        html += '</td></tr>';
+                    });
+                    html += '</tbody></table>';
+                    host.innerHTML = html;
+                }).catch(function () {
+                    var host = val('srReplacements');
+                    if (host) host.innerHTML = '<div class="sr-empty">Could not load replacements.</div>';
                 });
             }
 
@@ -1083,9 +1211,11 @@
                         ev.preventDefault();
                         var typeElM = val('srFilterType');
                         var reasonElM = val('srFilterReason');
+                        var searchElM = val('srSearchQ');
                         var qm = [];
                         if (typeElM && typeElM.value) qm.push('itemType=' + encodeURIComponent(typeElM.value));
                         if (reasonElM && reasonElM.value) qm.push('reason=' + encodeURIComponent(reasonElM.value));
+                        if (searchElM && searchElM.value.trim()) qm.push('q=' + encodeURIComponent(searchElM.value.trim()));
                         var path = '/candidates/encodeMatching' + (qm.length ? '?' + qm.join('&') : '');
                         api(path, 'POST').then(function (r) {
                             var queued = pick(r, 'queued') || 0;
@@ -1094,6 +1224,30 @@
                             Dashboard.alert('Queued ' + queued + ' of ' + matched + ' matching file(s).' + (capped ? ' (capped at 2000)' : ''));
                             showTab('queue');
                             loadQueue();
+                        });
+                        return;
+                    }
+                    var policyCard = ev.target.closest('.sr-policy-card');
+                    if (policyCard && page.contains(policyCard)) {
+                        ev.preventDefault();
+                        setReplacementPolicy(policyCard.getAttribute('data-policy'));
+                        markDirty();
+                        return;
+                    }
+                    var restoreBtn = ev.target.closest('.sr-restore');
+                    if (restoreBtn) {
+                        ev.preventDefault();
+                        var rid = restoreBtn.getAttribute('data-id');
+                        if (!rid) return;
+                        if (!window.confirm('Restore the previous file (or remove the sidecar)?')) return;
+                        api('/replacements/' + rid + '/restore', 'POST').then(function () {
+                            Dashboard.alert('Restored.');
+                            loadQueue();
+                            loadReplacements();
+                            refreshStatus();
+                        }).catch(function (err) {
+                            Dashboard.alert('Restore failed.');
+                            console.warn(err);
                         });
                         return;
                     }
@@ -1141,13 +1295,19 @@
                     var page = ev.target.closest && ev.target.closest('#StreamReadyPage');
                     if (!page) return;
                     if (ev.target.id === 'settingsSearchInput') runSearch();
+                    if (ev.target.id === 'srSearchQ') {
+                        if (searchTimer) clearTimeout(searchTimer);
+                        searchTimer = setTimeout(function () { loadCandidates(true); }, 350);
+                    }
                     if (ev.target.closest('#StreamReadyForm')) markDirty();
                 });
 
                 document.addEventListener('change', function (ev) {
                     var page = ev.target.closest && ev.target.closest('#StreamReadyPage');
                     if (!page) return;
-                    if (ev.target.id === 'srFilterType' || ev.target.id === 'srFilterReason') loadCandidates(true);
+                    if (ev.target.id === 'srFilterType' || ev.target.id === 'srFilterReason' || ev.target.id === 'srSortBy' || ev.target.id === 'srSortDir') {
+                        loadCandidates(true);
+                    }
                     if (ev.target.closest('#StreamReadyForm')) markDirty();
                 });
 

@@ -87,6 +87,10 @@ public class EncodePlanner
             ItemSettleDelaySeconds = config.ItemSettleDelaySeconds,
             MaxConcurrentJobs = config.MaxConcurrentJobs,
             PauseDuringPlayback = config.PauseDuringPlayback,
+            EncodeWindowEnabled = config.EncodeWindowEnabled,
+            EncodeWindowStart = config.EncodeWindowStart,
+            EncodeWindowEnd = config.EncodeWindowEnd,
+            EncodeWindowDays = config.EncodeWindowDays,
             WorkerPaused = config.WorkerPaused,
             FfmpegPreset = config.FfmpegPreset
         };
