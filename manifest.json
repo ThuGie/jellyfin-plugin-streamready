@@ -13,8 +13,8 @@
         "changelog": "**Full Changelog**: https://github.com/ThuGie/jellyfin-plugin-streamready/compare/v1.0.14.0...v1.1.0.0",
         "targetAbi": "10.11.0.0",
         "sourceUrl": "https://github.com/ThuGie/jellyfin-plugin-streamready/releases/download/v1.1.0.0/jellyfin-plugin-streamready_1.1.0.0.zip",
-        "checksum": "45b44f8984ce91f7e9ef75add780cd14",
-        "timestamp": "2026-09-05T18:09:52Z"
+        "checksum": "4a2471c1ca1bbf966cdbb7297710d6f1",
+        "timestamp": "2026-09-05T18:10:15Z"
       },
       {
         "version": "1.0.14.0",
