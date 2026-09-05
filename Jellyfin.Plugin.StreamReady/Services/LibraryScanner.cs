@@ -183,7 +183,7 @@ public class LibraryScanner
         }
 
         var result = new List<(Guid Id, string Name, string CollectionType)>();
-        foreach (var folder in LibraryCatalog.ListLibraries(_libraryManager))
+        foreach (var folder in LibraryCatalog.ListLibraries(_libraryManager, _logger))
         {
             if (!Guid.TryParse(folder.Id, out var id))
             {

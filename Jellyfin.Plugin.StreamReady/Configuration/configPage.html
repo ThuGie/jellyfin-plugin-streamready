@@ -201,15 +201,16 @@
                             <div class="selectContainer">
                                 <label class="inputLabel" for="HardwareAccel">Hardware acceleration</label>
                                 <select is="emby-select" id="HardwareAccel">
-                                    <option value="FollowServer">Follow Jellyfin server</option>
-                                    <option value="Software">Software</option>
-                                    <option value="nvenc">NVIDIA NVENC</option>
-                                    <option value="qsv">Intel QSV</option>
-                                    <option value="vaapi">VAAPI</option>
-                                    <option value="amf">AMD AMF</option>
-                                    <option value="videotoolbox">VideoToolbox</option>
+                                    <option value="FollowServer">Auto — use GPU when ffmpeg has it (QSV/VAAPI/NVENC)</option>
+                                    <option value="Software">Software (CPU only)</option>
+                                    <option value="qsv">Force Intel QSV</option>
+                                    <option value="vaapi">Force VAAPI</option>
+                                    <option value="nvenc">Force NVIDIA NVENC</option>
+                                    <option value="amf">Force AMD AMF</option>
+                                    <option value="videotoolbox">Force VideoToolbox</option>
                                 </select>
                             </div>
+                            <div class="sr-setting-description"><div class="fieldDescription">Auto picks the best encoder your ffmpeg reports (on Synology/sc-ffmpeg7 that is usually QSV, then VAAPI). Full encodes also use <code>-hwaccel</code> for GPU decode.</div></div>
                             <div class="selectContainer">
                                 <label class="inputLabel" for="AudioChannels">Audio channels (0 = preset default)</label>
                                 <select is="emby-select" id="AudioChannels">
@@ -449,19 +450,41 @@
                 if (id === 'queue') loadQueue();
             }
 
+            function normalizeLibraries(raw) {
+                var list = raw;
+                if (!Array.isArray(list)) {
+                    list = (raw && raw.Items) || (raw && raw.items) || [];
+                }
+                return (list || []).map(function (lib) {
+                    var id = lib.ItemId || lib.itemId || lib.id || lib.Id || '';
+                    if (id && id.indexOf('-') >= 0) {
+                        try {
+                            // normalize dashed GUID → N for consistent saves
+                            id = String(id).replace(/-/g, '');
+                        } catch (e) {}
+                    }
+                    return {
+                        id: id,
+                        name: lib.Name || lib.name || id,
+                        collectionType: lib.CollectionType || lib.collectionType || 'mixed'
+                    };
+                }).filter(function (lib) { return !!lib.id; });
+            }
+
             function loadConfig() {
                 var page = getPage();
                 if (!page) return;
                 Dashboard.showLoadingMsg();
                 Promise.all([
                     ApiClient.getPluginConfiguration(pluginId),
-                    api('/libraries')
+                    // Same source as jellyfin-plugin-pre-transcode / Dashboard → Libraries
+                    (ApiClient.getVirtualFolders
+                        ? ApiClient.getVirtualFolders()
+                        : ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl('Library/VirtualFolders') }))
+                        .catch(function () { return api('/libraries'); })
                 ]).then(function (results) {
                     var config = results[0];
-                    var libraries = results[1];
-                    if (!Array.isArray(libraries)) {
-                        libraries = (libraries && libraries.Items) || (libraries && libraries.items) || [];
-                    }
+                    var libraries = normalizeLibraries(results[1]);
                     ['Enabled', 'AutoDirectPreTranscode', 'IncludeExtras', 'ToneMapHdr', 'VerifyBeforeReplace', 'PauseDuringPlayback'].forEach(function (id) {
                         var el = val(id);
                         if (el) el.checked = !!config[id];
@@ -494,8 +517,10 @@
                     return;
                 }
                 host.innerHTML = libraries.map(function (lib) {
-                    var checked = selected.indexOf(lib.id) >= 0 || selected.indexOf((lib.id || '').replace(/-/g, '')) >= 0 ? ' checked' : '';
-                    return '<div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" class="sr-lib" data-id="' + lib.id + '"' + checked + '/><span>' + escapeHtml(lib.name) + ' <em>(' + escapeHtml(lib.collectionType || 'mixed') + ')</em></span></label></div>';
+                    var id = lib.id || '';
+                    var dashed = id.length === 32 ? id.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5') : id;
+                    var checked = selected.indexOf(id) >= 0 || selected.indexOf(dashed) >= 0 || selected.indexOf((id || '').replace(/-/g, '')) >= 0 ? ' checked' : '';
+                    return '<div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" class="sr-lib" data-id="' + escapeHtml(id) + '"' + checked + '/><span>' + escapeHtml(lib.name) + ' <em>(' + escapeHtml(lib.collectionType || 'mixed') + ')</em></span></label></div>';
                 }).join('');
             }
 
@@ -541,7 +566,8 @@
                     var grid = val('srStatusGrid');
                     if (!grid) return;
                     var cards = [
-                        card(s.ffmpegReady ? 'ok' : 'warn', 'movie_filter', 'FFmpeg', s.ffmpegReady ? (s.ffmpegPath || ('v' + (s.ffmpegVersion || ''))) : 'Not found', null),
+                        card(s.ffmpegReady ? 'ok' : 'warn', 'movie_filter', 'FFmpeg', s.ffmpegReady ? ((s.ffmpegVersion ? 'v' + s.ffmpegVersion + ' · ' : '') + (s.ffmpegPath || 'ready')) : 'Not found', null),
+                        card(s.ffmpegReady ? 'ok' : 'warn', 'memory', 'Hardware', s.hardwareAccel || 'Software (CPU)', 'encoding'),
                         card(s.autoDirectPreTranscode ? 'warn' : 'ok', 'tune', 'Mode', s.autoDirectPreTranscode ? 'Auto Direct Pre-Transcode' : 'Manual', null),
                         card(s.configured ? 'ok' : 'warn', 'video_library', 'Libraries', s.configured ? 'Selected' : 'Select libraries to begin', 'libraries'),
                         card('ok', 'playlist_add_check', 'Needs encoding', String(s.candidateCount || 0), 'needs'),

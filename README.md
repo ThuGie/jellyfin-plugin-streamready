@@ -72,11 +72,11 @@ Copy the published `Jellyfin.Plugin.StreamReady.dll` (and `thumb.png`) into the 
 GitHub Actions builds on every push and pull request. Pushing a version tag publishes the release:
 
 ```bash
-git tag v1.0.5.0
-git push origin v1.0.5.0
+git tag v1.0.6.0
+git push origin v1.0.6.0
 ```
 
-The tag must match `AssemblyVersion` in the csproj (for example `v1.0.5.0`). CI then builds the zip, creates the GitHub Release, and writes the MD5 checksum into `manifest.json`, which Jellyfin uses to verify catalog installs. You can also Draft a GitHub Release with that tag; publishing it creates the same tag and runs the same job.
+The tag must match `AssemblyVersion` in the csproj (for example `v1.0.6.0`). CI then builds the zip, creates the GitHub Release, and writes the MD5 checksum into `manifest.json`, which Jellyfin uses to verify catalog installs. You can also Draft a GitHub Release with that tag; publishing it creates the same tag and runs the same job.
 
 The catalog icon is `images/logo.png` at **256×256 PNG** (Jellyfin’s plugin cards display around 80px; 256 stays sharp on HiDPI). The same file is shipped as `thumb.png` inside the plugin zip.
 

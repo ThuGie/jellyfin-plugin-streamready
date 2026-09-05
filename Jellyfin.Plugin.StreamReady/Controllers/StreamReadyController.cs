@@ -3,6 +3,7 @@ using Jellyfin.Plugin.StreamReady.Services;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.StreamReady.Controllers;
 
@@ -15,19 +16,22 @@ public class StreamReadyController : ControllerBase
     private readonly EncodeWorker _worker;
     private readonly FfmpegRunner _ffmpeg;
     private readonly ILibraryManager _libraryManager;
+    private readonly ILogger<StreamReadyController> _logger;
 
     public StreamReadyController(
         JobStore store,
         LibraryScanner scanner,
         EncodeWorker worker,
         FfmpegRunner ffmpeg,
-        ILibraryManager libraryManager)
+        ILibraryManager libraryManager,
+        ILogger<StreamReadyController> logger)
     {
         _store = store;
         _scanner = scanner;
         _worker = worker;
         _ffmpeg = ffmpeg;
         _libraryManager = libraryManager;
+        _logger = logger;
     }
 
     [HttpGet("Configuration/configPage.css")]
@@ -65,6 +69,7 @@ public class StreamReadyController : ControllerBase
         var current = _worker.CurrentJob;
         var ffmpegPath = _ffmpeg.EncoderPath;
         var ffmpegVersion = _ffmpeg.EncoderVersion;
+        var hwLabel = _ffmpeg.DescribeHardware(config);
         return new
         {
             enabled = config?.Enabled ?? false,
@@ -74,11 +79,10 @@ public class StreamReadyController : ControllerBase
             lastScanUtc = _scanner.LastScanUtc,
             lastFound = _scanner.LastFound,
             paused = _worker.IsPaused,
-            ffmpegPath = string.IsNullOrWhiteSpace(ffmpegPath)
-                ? (ffmpegVersion is null ? string.Empty : "ffmpeg " + ffmpegVersion)
-                : ffmpegPath,
+            ffmpegPath,
             ffmpegVersion,
             ffmpegReady = _ffmpeg.IsReady,
+            hardwareAccel = hwLabel,
             candidateCount = _store.GetCandidates().Count,
             queuedCount = _store.QueuedCount(),
             runningCount = _store.RunningCount(),
@@ -99,12 +103,15 @@ public class StreamReadyController : ControllerBase
     [HttpGet("libraries")]
     public ActionResult<object> GetLibraries()
     {
-        var folders = LibraryCatalog.ListLibraries(_libraryManager)
+        var folders = LibraryCatalog.ListLibraries(_libraryManager, _logger)
             .Select(f => new
             {
                 id = f.Id,
+                ItemId = f.Id,
                 name = f.Name,
-                collectionType = f.CollectionType
+                Name = f.Name,
+                collectionType = f.CollectionType,
+                CollectionType = f.CollectionType
             })
             .ToList();
         return folders;

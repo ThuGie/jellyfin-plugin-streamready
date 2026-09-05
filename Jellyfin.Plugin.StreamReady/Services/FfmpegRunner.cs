@@ -31,6 +31,10 @@ public class FfmpegRunner
         _logger = logger;
     }
 
+    /// <summary>
+    /// Same strategy as jellyfin-plugin-pre-transcode: prefer Jellyfin's path, else fall back to
+    /// the bare <c>ffmpeg</c> command on PATH. Never treat a missing File.Exists as "not ready".
+    /// </summary>
     public string EncoderPath
     {
         get
@@ -58,7 +62,7 @@ public class FfmpegRunner
                 // ignored
             }
 
-            return string.Empty;
+            return "ffmpeg";
         }
     }
 
@@ -69,7 +73,7 @@ public class FfmpegRunner
             try
             {
                 var version = _mediaEncoder.EncoderVersion;
-                return version is null ? null : version.ToString();
+                return version is null || version.Major <= 0 ? null : version.ToString();
             }
             catch
             {
@@ -82,27 +86,25 @@ public class FfmpegRunner
     {
         get
         {
+            if (!string.IsNullOrWhiteSpace(EncoderVersion))
+            {
+                return true;
+            }
+
+            // Jellyfin found ffmpeg even when EncoderVersion is briefly unset.
             try
             {
-                if (_mediaEncoder.EncoderVersion is not null && _mediaEncoder.EncoderVersion.Major > 0)
-                {
-                    return true;
-                }
+                return _mediaEncoder.SupportsEncoder("libx264")
+                    || _mediaEncoder.SupportsEncoder("libx265")
+                    || _mediaEncoder.SupportsEncoder("h264_qsv")
+                    || _mediaEncoder.SupportsEncoder("h264_vaapi")
+                    || _mediaEncoder.SupportsEncoder("h264_nvenc")
+                    || !string.IsNullOrWhiteSpace(_mediaEncoder.EncoderPath);
             }
             catch
             {
-                // ignored
+                return !string.IsNullOrWhiteSpace(EncoderPath);
             }
-
-            var path = EncoderPath;
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return false;
-            }
-
-            // Absolute path that exists, or a bare command Jellyfin resolved on PATH
-            // (File.Exists("ffmpeg") is false even when Process.Start works).
-            return File.Exists(path) || path.IndexOf(Path.DirectorySeparatorChar) < 0;
         }
     }
 
@@ -115,19 +117,28 @@ public class FfmpegRunner
                 return _mediaEncoder.ProbePath;
             }
 
-            var encoder = _mediaEncoder.EncoderPath;
-            if (string.IsNullOrWhiteSpace(encoder))
-            {
-                return string.Empty;
-            }
-
-            var file = Path.GetFileName(encoder);
-            var probe = file.Contains("ffmpeg", StringComparison.OrdinalIgnoreCase)
-                ? file.Replace("ffmpeg", "ffprobe", StringComparison.OrdinalIgnoreCase)
-                : "ffprobe";
-            var dir = Path.GetDirectoryName(encoder);
+            var ffmpeg = EncoderPath;
+            var file = Path.GetFileName(ffmpeg);
+            var probe = string.IsNullOrEmpty(file)
+                ? "ffprobe"
+                : file.Replace("ffmpeg", "ffprobe", StringComparison.OrdinalIgnoreCase);
+            var dir = Path.GetDirectoryName(ffmpeg);
             return string.IsNullOrEmpty(dir) ? probe : Path.Combine(dir, probe);
         }
+    }
+
+    public string DescribeHardware(PluginConfiguration? config)
+    {
+        var hw = ResolveHardware(config ?? new PluginConfiguration());
+        return hw switch
+        {
+            HardwareAccelerationType.qsv => "Intel QSV",
+            HardwareAccelerationType.vaapi => "VAAPI",
+            HardwareAccelerationType.nvenc => "NVIDIA NVENC",
+            HardwareAccelerationType.amf => "AMD AMF",
+            HardwareAccelerationType.videotoolbox => "VideoToolbox",
+            _ => "Software (CPU)"
+        };
     }
 
     public async Task<double> ProbeDurationAsync(string path, CancellationToken cancellationToken)
@@ -160,13 +171,13 @@ public class FfmpegRunner
         CancellationToken cancellationToken)
     {
         var ffmpeg = EncoderPath;
-        if (string.IsNullOrWhiteSpace(ffmpeg) || !IsReady)
+        if (!IsReady)
         {
-            throw new InvalidOperationException("FFmpeg path is not configured in Jellyfin.");
+            throw new InvalidOperationException("FFmpeg is not available. Check Dashboard → Playback → Transcoding.");
         }
 
         var args = BuildArgs(inputPath, outputPath, action, config);
-        _logger.LogInformation("StreamReady ffmpeg: {Args}", args);
+        _logger.LogInformation("StreamReady ffmpeg ({Hw}): {Bin} {Args}", DescribeHardware(config), ffmpeg, args);
 
         var (exit, _, stderr) = await RunProcessAsync(
             ffmpeg,
@@ -199,6 +210,16 @@ public class FfmpegRunner
     {
         var sb = new StringBuilder();
         sb.Append("-y -hide_banner -loglevel error -stats ");
+
+        var hw = action == EncodeAction.Full ? ResolveHardware(config) : HardwareAccelerationType.none;
+        var hwaccel = HwaccelMethod(hw);
+        // Decode on GPU when encoding on GPU. Omit -hwaccel_output_format so software filters
+        // (tone-map / scale) still work — same approach as jellyfin-plugin-pre-transcode.
+        if (!string.IsNullOrEmpty(hwaccel))
+        {
+            sb.Append("-hwaccel ").Append(hwaccel).Append(' ');
+        }
+
         sb.Append("-i ").Append(Quote(inputPath)).Append(' ');
         if (action == EncodeAction.Remux)
         {
@@ -214,6 +235,7 @@ public class FfmpegRunner
         var crf = EncodePlanner.DestinationCrf(config);
         var audioBitrate = channels <= 2 ? "192k" : "384k";
         var preset = string.IsNullOrWhiteSpace(config.FfmpegPreset) ? "medium" : config.FfmpegPreset;
+        var vf = action == EncodeAction.Full ? BuildVideoFilter(config) : string.Empty;
 
         switch (action)
         {
@@ -225,21 +247,27 @@ public class FfmpegRunner
                     .Append(" -ac ").Append(channels).Append(' ');
                 break;
             default:
-                var vf = BuildVideoFilter(config);
+                // VAAPI encode + software tone-map is fragile; prefer QSV/NVENC or fall back to software.
+                var (videoEncoder, extra) = ResolveVideoEncoder(destCodec, config, !string.IsNullOrEmpty(vf));
                 if (!string.IsNullOrEmpty(vf))
                 {
+                    if (videoEncoder.Contains("vaapi", StringComparison.OrdinalIgnoreCase))
+                    {
+                        vf += ",format=nv12,hwupload";
+                    }
+
                     sb.Append("-vf ").Append(Quote(vf)).Append(' ');
                 }
 
-                var (videoEncoder, extra) = ResolveVideoEncoder(destCodec, config);
                 sb.Append("-c:v ").Append(videoEncoder).Append(' ').Append(extra);
                 if (videoEncoder is "libx264" or "libx265")
                 {
                     sb.Append("-crf ").Append(crf).Append(" -preset ").Append(preset).Append(' ');
+                    sb.Append("-pix_fmt yuv420p ");
                 }
                 else if (videoEncoder.Contains("nvenc", StringComparison.OrdinalIgnoreCase))
                 {
-                    sb.Append("-cq ").Append(Math.Max(crf, 16)).Append(" -preset p4 ");
+                    sb.Append("-cq ").Append(Math.Max(crf, 16)).Append(" -preset p4 -pix_fmt yuv420p ");
                 }
                 else if (videoEncoder.Contains("qsv", StringComparison.OrdinalIgnoreCase))
                 {
@@ -249,8 +277,12 @@ public class FfmpegRunner
                 {
                     sb.Append("-qp ").Append(crf).Append(' ');
                 }
+                else
+                {
+                    sb.Append("-pix_fmt yuv420p ");
+                }
 
-                sb.Append("-pix_fmt yuv420p -c:a aac -b:a ").Append(audioBitrate)
+                sb.Append("-c:a aac -b:a ").Append(audioBitrate)
                     .Append(" -ac ").Append(channels).Append(' ');
                 break;
         }
@@ -287,11 +319,18 @@ public class FfmpegRunner
         return string.Join(',', filters);
     }
 
-    private (string Encoder, string Extra) ResolveVideoEncoder(string destCodec, PluginConfiguration config)
+    private (string Encoder, string Extra) ResolveVideoEncoder(string destCodec, PluginConfiguration config, bool hasSoftwareFilters)
     {
         var hw = ResolveHardware(config);
         var hevc = destCodec.Equals("hevc", StringComparison.OrdinalIgnoreCase);
         var extra = string.Empty;
+
+        // Soft filters + VAAPI encode often fails; fall back to software encode (decode can still be HW).
+        if (hw == HardwareAccelerationType.vaapi && hasSoftwareFilters)
+        {
+            _logger.LogInformation("StreamReady using software encode because VAAPI + tone-map/scale filters are unreliable together");
+            return (hevc ? "libx265" : "libx264", extra);
+        }
 
         switch (hw)
         {
@@ -311,7 +350,20 @@ public class FfmpegRunner
         }
     }
 
-    private HardwareAccelerationType ResolveHardware(PluginConfiguration config)
+    private static string? HwaccelMethod(HardwareAccelerationType hw)
+    {
+        return hw switch
+        {
+            HardwareAccelerationType.nvenc => "cuda",
+            HardwareAccelerationType.qsv => "qsv",
+            HardwareAccelerationType.vaapi => "vaapi",
+            HardwareAccelerationType.videotoolbox => "videotoolbox",
+            HardwareAccelerationType.amf => "d3d11va",
+            _ => null
+        };
+    }
+
+    public HardwareAccelerationType ResolveHardware(PluginConfiguration config)
     {
         var choice = config.HardwareAccel ?? "FollowServer";
         if (choice.Equals("Software", StringComparison.OrdinalIgnoreCase))
@@ -329,19 +381,94 @@ public class FfmpegRunner
             options = null;
         }
 
-        if (choice.Equals("FollowServer", StringComparison.OrdinalIgnoreCase))
+        HardwareAccelerationType requested;
+        if (choice.Equals("FollowServer", StringComparison.OrdinalIgnoreCase)
+            || choice.Equals("Auto", StringComparison.OrdinalIgnoreCase))
         {
-            if (options is null || !options.EnableHardwareEncoding)
+            if (options is not null
+                && options.EnableHardwareEncoding
+                && options.HardwareAccelerationType != HardwareAccelerationType.none
+                && EncoderSupports(options.HardwareAccelerationType))
             {
-                return HardwareAccelerationType.none;
+                requested = options.HardwareAccelerationType;
             }
-
-            return options.HardwareAccelerationType;
+            else
+            {
+                requested = DetectBestHardware();
+            }
+        }
+        else if (Enum.TryParse(choice, true, out HardwareAccelerationType parsed))
+        {
+            requested = parsed;
+        }
+        else
+        {
+            requested = DetectBestHardware();
         }
 
-        return Enum.TryParse(choice, true, out HardwareAccelerationType parsed)
-            ? parsed
-            : HardwareAccelerationType.none;
+        if (requested != HardwareAccelerationType.none && !EncoderSupports(requested))
+        {
+            _logger.LogWarning("StreamReady requested {Hw} but ffmpeg lacks that encoder; auto-detecting", requested);
+            requested = DetectBestHardware();
+        }
+
+        return requested;
+    }
+
+    private HardwareAccelerationType DetectBestHardware()
+    {
+        // Prefer what the user's Synology/sc-ffmpeg7 log typically exposes first.
+        if (EncoderSupports(HardwareAccelerationType.qsv))
+        {
+            return HardwareAccelerationType.qsv;
+        }
+
+        if (EncoderSupports(HardwareAccelerationType.nvenc))
+        {
+            return HardwareAccelerationType.nvenc;
+        }
+
+        if (EncoderSupports(HardwareAccelerationType.amf))
+        {
+            return HardwareAccelerationType.amf;
+        }
+
+        if (EncoderSupports(HardwareAccelerationType.videotoolbox))
+        {
+            return HardwareAccelerationType.videotoolbox;
+        }
+
+        if (EncoderSupports(HardwareAccelerationType.vaapi))
+        {
+            return HardwareAccelerationType.vaapi;
+        }
+
+        return HardwareAccelerationType.none;
+    }
+
+    private bool EncoderSupports(HardwareAccelerationType hw)
+    {
+        try
+        {
+            return hw switch
+            {
+                HardwareAccelerationType.qsv =>
+                    _mediaEncoder.SupportsEncoder("h264_qsv") || _mediaEncoder.SupportsEncoder("hevc_qsv"),
+                HardwareAccelerationType.nvenc =>
+                    _mediaEncoder.SupportsEncoder("h264_nvenc") || _mediaEncoder.SupportsEncoder("hevc_nvenc"),
+                HardwareAccelerationType.vaapi =>
+                    _mediaEncoder.SupportsEncoder("h264_vaapi") || _mediaEncoder.SupportsEncoder("hevc_vaapi"),
+                HardwareAccelerationType.amf =>
+                    _mediaEncoder.SupportsEncoder("h264_amf") || _mediaEncoder.SupportsEncoder("hevc_amf"),
+                HardwareAccelerationType.videotoolbox =>
+                    _mediaEncoder.SupportsEncoder("h264_videotoolbox") || _mediaEncoder.SupportsEncoder("hevc_videotoolbox"),
+                _ => false
+            };
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(

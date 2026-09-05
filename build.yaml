@@ -1,7 +1,7 @@
 ---
 name: "StreamReady"
 guid: "9d2e8c4a-1f6b-4a73-b8e0-5c9f3a7d2e11"
-version: "1.0.5.0"
+version: "1.0.6.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "ThuGie"
@@ -17,5 +17,6 @@ category: "General"
 artifacts:
   - "Jellyfin.Plugin.StreamReady.dll"
 changelog: >
-  Fix library listing (use collection folders, not only virtual-folder dirs) and
-  detect FFmpeg via Jellyfin's EncoderVersion instead of File.Exists on PATH.
+  Load libraries via Jellyfin ApiClient.getVirtualFolders (same as Pre-Transcode).
+  Detect FFmpeg like Pre-Transcode (path fallback to "ffmpeg", no File.Exists).
+  Auto GPU encode/decode (QSV/VAAPI/NVENC) when ffmpeg reports the encoders.
