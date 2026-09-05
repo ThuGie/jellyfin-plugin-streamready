@@ -69,7 +69,15 @@ public class StreamReadyController : ControllerBase
         var current = _worker.CurrentJob;
         var ffmpegPath = _ffmpeg.EncoderPath;
         var ffmpegVersion = _ffmpeg.EncoderVersion;
+        var ffmpegReady = _ffmpeg.IsReady;
         var hwLabel = _ffmpeg.DescribeHardware(config);
+        _logger.LogDebug(
+            "StreamReady status: ready={Ready} path={Path} version={Version} hw={Hw} candidates={Count}",
+            ffmpegReady,
+            ffmpegPath,
+            ffmpegVersion,
+            hwLabel,
+            _store.GetCandidates().Count);
         return new
         {
             enabled = config?.Enabled ?? false,
@@ -81,7 +89,7 @@ public class StreamReadyController : ControllerBase
             paused = _worker.IsPaused,
             ffmpegPath,
             ffmpegVersion,
-            ffmpegReady = _ffmpeg.IsReady,
+            ffmpegReady,
             hardwareAccel = hwLabel,
             candidateCount = _store.GetCandidates().Count,
             queuedCount = _store.QueuedCount(),
@@ -90,11 +98,11 @@ public class StreamReadyController : ControllerBase
                 ? null
                 : new
                 {
-                    current.Id,
-                    current.Name,
-                    current.Progress,
-                    current.Status,
-                    Action = current.Action.ToString()
+                    id = current.Id,
+                    name = current.Name,
+                    progress = current.Progress,
+                    status = current.Status.ToString(),
+                    action = current.Action.ToString()
                 }
         };
     }
@@ -107,11 +115,8 @@ public class StreamReadyController : ControllerBase
             .Select(f => new
             {
                 id = f.Id,
-                ItemId = f.Id,
                 name = f.Name,
-                Name = f.Name,
-                collectionType = f.CollectionType,
-                CollectionType = f.CollectionType
+                collectionType = f.CollectionType
             })
             .ToList();
         return folders;
@@ -127,8 +132,22 @@ public class StreamReadyController : ControllerBase
 
     [Authorize]
     [HttpGet("candidates")]
-    public ActionResult<object> GetCandidates([FromQuery] string? reason, [FromQuery] string? itemType)
+    public ActionResult<object> GetCandidates(
+        [FromQuery] string? reason,
+        [FromQuery] string? itemType,
+        [FromQuery] int skip = 0,
+        [FromQuery] int limit = 200)
     {
+        if (limit <= 0 || limit > 500)
+        {
+            limit = 200;
+        }
+
+        if (skip < 0)
+        {
+            skip = 0;
+        }
+
         var list = _store.GetCandidates().AsEnumerable();
         if (!string.IsNullOrWhiteSpace(reason))
         {
@@ -140,7 +159,17 @@ public class StreamReadyController : ControllerBase
             list = list.Where(c => c.ItemType.Equals(itemType, StringComparison.OrdinalIgnoreCase));
         }
 
-        return list.Select(MapCandidate).ToList();
+        var filtered = list
+            .OrderByDescending(c => c.SizeBytes)
+            .ToList();
+        var page = filtered.Skip(skip).Take(limit).Select(MapCandidate).ToList();
+        return new
+        {
+            total = filtered.Count,
+            skip,
+            limit,
+            items = page
+        };
     }
 
     [Authorize]
@@ -238,27 +267,27 @@ public class StreamReadyController : ControllerBase
     {
         return new
         {
-            c.Id,
-            c.ItemId,
-            c.Name,
-            c.SeriesName,
-            c.ItemType,
-            c.LibraryId,
-            c.LibraryName,
-            c.Path,
-            c.SizeBytes,
+            id = c.Id,
+            itemId = c.ItemId,
+            name = c.Name,
+            seriesName = c.SeriesName,
+            itemType = c.ItemType,
+            libraryId = c.LibraryId,
+            libraryName = c.LibraryName,
+            path = c.Path,
+            sizeBytes = c.SizeBytes,
             sizeLabel = FormatSize(c.SizeBytes),
-            c.Container,
-            c.VideoCodec,
-            c.AudioCodec,
-            c.VideoRange,
-            c.Width,
-            c.Height,
-            c.Bitrate,
+            container = c.Container,
+            videoCodec = c.VideoCodec,
+            audioCodec = c.AudioCodec,
+            videoRange = c.VideoRange,
+            width = c.Width,
+            height = c.Height,
+            bitrate = c.Bitrate,
             reasons = c.Reasons,
             plannedAction = c.PlannedAction.ToString(),
-            c.Ignored,
-            c.AddedAt
+            ignored = c.Ignored,
+            addedAt = c.AddedAt
         };
     }
 
@@ -266,18 +295,18 @@ public class StreamReadyController : ControllerBase
     {
         return new
         {
-            j.Id,
-            j.CandidateId,
-            j.ItemId,
-            j.Name,
-            j.Path,
+            id = j.Id,
+            candidateId = j.CandidateId,
+            itemId = j.ItemId,
+            name = j.Name,
+            path = j.Path,
             action = j.Action.ToString(),
             status = j.Status.ToString(),
-            j.Progress,
-            j.Error,
-            j.QueuedAt,
-            j.StartedAt,
-            j.FinishedAt,
+            progress = j.Progress,
+            error = j.Error,
+            queuedAt = j.QueuedAt,
+            startedAt = j.StartedAt,
+            finishedAt = j.FinishedAt,
             reasons = j.Reasons
         };
     }
