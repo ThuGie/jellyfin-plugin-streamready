@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using Jellyfin.Plugin.StreamReady.Configuration;
 using Jellyfin.Plugin.StreamReady.Models;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -17,8 +19,10 @@ public class EncodeWorker : BackgroundService
     private readonly ISessionManager _sessionManager;
     private readonly ILogger<EncodeWorker> _logger;
     private readonly object _pauseGate = new();
+    private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _settleTimers = new();
     private CancellationTokenSource? _jobCts;
     private DateTime _lastScanUtc = DateTime.MinValue;
+    private string? _pauseRequeueJobId;
 
     public EncodeWorker(
         JobStore store,
@@ -45,11 +49,26 @@ public class EncodeWorker : BackgroundService
     public void Pause()
     {
         IsPaused = true;
+        PersistWorkerPaused(true);
+        string? runningId;
+        lock (_pauseGate)
+        {
+            runningId = CurrentJob?.Id;
+            _pauseRequeueJobId = runningId;
+            _jobCts?.Cancel();
+        }
+
+        if (!string.IsNullOrEmpty(runningId))
+        {
+            _store.Requeue(runningId, "Paused by admin");
+        }
     }
 
     public void Resume()
     {
         IsPaused = false;
+        PersistWorkerPaused(false);
+        _pauseRequeueJobId = null;
     }
 
     public void CancelCurrent()
@@ -62,6 +81,7 @@ public class EncodeWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        IsPaused = Plugin.Instance?.Configuration.WorkerPaused ?? false;
         _libraryManager.ItemAdded += OnItemChanged;
         _libraryManager.ItemUpdated += OnItemChanged;
         try
@@ -88,6 +108,20 @@ public class EncodeWorker : BackgroundService
         {
             _libraryManager.ItemAdded -= OnItemChanged;
             _libraryManager.ItemUpdated -= OnItemChanged;
+            foreach (var cts in _settleTimers.Values)
+            {
+                try
+                {
+                    cts.Cancel();
+                    cts.Dispose();
+                }
+                catch
+                {
+                    // ignored
+                }
+            }
+
+            _settleTimers.Clear();
         }
     }
 
@@ -171,6 +205,10 @@ public class EncodeWorker : BackgroundService
             }
 
             var config = Plugin.Instance!.Configuration;
+            var folders = _libraryManager.GetCollectionFolders(item);
+            var libraryId = folders.FirstOrDefault()?.Id.ToString("N") ?? string.Empty;
+            config = EncodePlanner.WithLibraryPreset(config, libraryId);
+
             var destExt = "." + EncodePlanner.DestinationContainer(config);
             var tempPath = sourcePath + ".streamready.tmp" + destExt;
             if (File.Exists(tempPath))
@@ -184,7 +222,6 @@ public class EncodeWorker : BackgroundService
 
             var progress = new Progress<EncodeProgressUpdate>(update =>
             {
-                // Values <= 1% are start/retry markers and may reset a false ~100% reading.
                 _store.UpdateProgress(
                     job.Id,
                     update.Percent,
@@ -249,6 +286,11 @@ public class EncodeWorker : BackgroundService
             if (_store.IsCancelled(job.Id) || jobCts.IsCancellationRequested)
             {
                 TryDelete(tempPath);
+                if (_pauseRequeueJobId == job.Id)
+                {
+                    _pauseRequeueJobId = null;
+                }
+
                 return;
             }
 
@@ -274,6 +316,20 @@ public class EncodeWorker : BackgroundService
                 }
             }
 
+            if (config.DiscardIfOutputLarger && File.Exists(tempPath) && File.Exists(sourcePath))
+            {
+                var outSize = new FileInfo(tempPath).Length;
+                var inSize = new FileInfo(sourcePath).Length;
+                if (outSize >= inSize)
+                {
+                    TryDelete(tempPath);
+                    _store.Fail(
+                        job.Id,
+                        $"Output larger than source ({FormatSize(outSize)} >= {FormatSize(inSize)}); discarded");
+                    return;
+                }
+            }
+
             if (IsPlaying(item.Id))
             {
                 TryDelete(tempPath);
@@ -290,12 +346,26 @@ public class EncodeWorker : BackgroundService
         }
         catch (OperationCanceledException)
         {
-            _store.Fail(job.Id, "Cancelled");
+            if (_pauseRequeueJobId == job.Id)
+            {
+                _pauseRequeueJobId = null;
+                // Already requeued in Pause().
+            }
+            else
+            {
+                _store.Fail(job.Id, "Cancelled");
+            }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "StreamReady encode failed for {Name}", job.Name);
-            _store.Fail(job.Id, ex.Message);
+            var shortMsg = ex.Message;
+            if (shortMsg.Length > 280)
+            {
+                shortMsg = shortMsg[..280] + "…";
+            }
+
+            _store.Fail(job.Id, shortMsg, TruncateDetail(ex.Message, 8000));
         }
         finally
         {
@@ -320,17 +390,81 @@ public class EncodeWorker : BackgroundService
     {
         try
         {
-            if (e.Item is not Video)
+            if (e.Item is not Video video)
             {
                 return;
             }
 
-            _scanner.AnalyzeItem(e.Item);
+            var delay = Plugin.Instance?.Configuration.ItemSettleDelaySeconds ?? 120;
+            if (delay <= 0)
+            {
+                _scanner.AnalyzeItem(video);
+                return;
+            }
+
+            var id = video.Id;
+            if (_settleTimers.TryRemove(id, out var old))
+            {
+                try
+                {
+                    old.Cancel();
+                    old.Dispose();
+                }
+                catch
+                {
+                    // ignored
+                }
+            }
+
+            var cts = new CancellationTokenSource();
+            _settleTimers[id] = cts;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(delay), cts.Token).ConfigureAwait(false);
+                    if (cts.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
+                    var latest = _libraryManager.GetItemById(id);
+                    if (latest is Video)
+                    {
+                        _scanner.AnalyzeItem(latest);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // superseded
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "StreamReady settle analysis failed");
+                }
+                finally
+                {
+                    _settleTimers.TryRemove(id, out _);
+                    cts.Dispose();
+                }
+            });
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "StreamReady item-change analysis failed");
         }
+    }
+
+    private static void PersistWorkerPaused(bool paused)
+    {
+        var plugin = Plugin.Instance;
+        if (plugin is null)
+        {
+            return;
+        }
+
+        plugin.Configuration.WorkerPaused = paused;
+        plugin.SaveConfiguration();
     }
 
     private bool HasActivePlayback()
@@ -341,6 +475,31 @@ public class EncodeWorker : BackgroundService
     private bool IsPlaying(Guid itemId)
     {
         return _sessionManager.Sessions.Any(s => s.NowPlayingItem?.Id == itemId);
+    }
+
+    private static string TruncateDetail(string value, int max)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= max)
+        {
+            return value;
+        }
+
+        return value[^max..];
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        if (bytes >= 1024L * 1024L * 1024L)
+        {
+            return $"{bytes / (1024d * 1024d * 1024d):0.0} GiB";
+        }
+
+        if (bytes >= 1024L * 1024L)
+        {
+            return $"{bytes / (1024d * 1024d):0} MiB";
+        }
+
+        return $"{bytes} B";
     }
 
     private static void TryDelete(string path)

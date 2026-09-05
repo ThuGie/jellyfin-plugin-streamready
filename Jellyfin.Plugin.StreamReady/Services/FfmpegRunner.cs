@@ -474,9 +474,15 @@ public class FfmpegRunner
         }
 
         sb.Append("-i ").Append(Quote(inputPath)).Append(' ');
+        var keepAll = config.KeepAllAudioAndSubtitles;
+        var destContainer = EncodePlanner.DestinationContainer(config);
         if (action == EncodeAction.Remux)
         {
             sb.Append("-map 0 ");
+        }
+        else if (keepAll)
+        {
+            sb.Append("-map 0:v:0 -map 0:a? -map 0:s? ");
         }
         else
         {
@@ -497,6 +503,11 @@ public class FfmpegRunner
             case EncodeAction.AudioOnly:
                 sb.Append("-c:v copy -c:a aac -b:a ").Append(audioBitrate)
                     .Append(" -ac ").Append(channels).Append(' ');
+                if (keepAll)
+                {
+                    sb.Append(destContainer == "mkv" ? "-c:s copy " : "-c:s mov_text ");
+                }
+
                 break;
             default:
                 if (hasSoftwareFilters)
@@ -552,19 +563,33 @@ public class FfmpegRunner
 
                 sb.Append("-c:a aac -b:a ").Append(audioBitrate)
                     .Append(" -ac ").Append(channels).Append(' ');
+                if (keepAll)
+                {
+                    sb.Append(destContainer == "mkv" ? "-c:s copy " : "-c:s mov_text ");
+                }
+
                 break;
         }
 
-        if (Path.GetExtension(outputPath).Equals(".mp4", StringComparison.OrdinalIgnoreCase))
+        if (destContainer == "mp4"
+            || Path.GetExtension(outputPath).Equals(".mp4", StringComparison.OrdinalIgnoreCase))
         {
             if (action == EncodeAction.Remux)
             {
                 sb.Append("-c:s mov_text -movflags +faststart ");
             }
-            else
+            else if (!keepAll)
             {
                 sb.Append("-sn -movflags +faststart ");
             }
+            else
+            {
+                sb.Append("-movflags +faststart ");
+            }
+        }
+        else if (destContainer == "mkv")
+        {
+            sb.Append("-f matroska ");
         }
 
         sb.Append(Quote(outputPath));
@@ -577,8 +602,14 @@ public class FfmpegRunner
         {
             action.ToString(),
             videoEncoder,
-            hardwareLabel
+            hardwareLabel,
+            destContainer
         };
+        if (keepAll)
+        {
+            summaryParts.Add("all audio/subs");
+        }
+
         if (forceSoftware)
         {
             summaryParts.Add("fallback");
@@ -626,9 +657,10 @@ public class FfmpegRunner
     private string BuildVideoFilter(PluginConfiguration config, string? videoRange)
     {
         var filters = new List<string>();
-        // Tone-map only for known HDR/DV. Never invent tonemap for unknown/SDR — that forced
-        // soft filters and previously knocked QSV down to libx264 (CPU).
-        if (config.ToneMapHdr && IsHdrRange(videoRange))
+        // Tone-map only when HDR/DV is not in AllowedVideoRanges (keep HDR when user allows it).
+        var rangeDisallowed = !string.IsNullOrWhiteSpace(videoRange)
+            && !CompatibilityAnalyzer.RangeAllowed(videoRange, config.AllowedVideoRanges);
+        if (config.ToneMapHdr && IsHdrRange(videoRange) && rangeDisallowed)
         {
             filters.Add("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p");
         }

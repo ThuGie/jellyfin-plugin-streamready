@@ -2388,6 +2388,49 @@ div#bazarrMappingsValidationResult {
     gap: 8px;
 }
 
+.sr-library-row {
+    display: grid;
+    gap: 6px;
+    padding: 8px 10px;
+    border: 1px solid var(--sr-border);
+    border-radius: 8px;
+    background: var(--sr-surface-1);
+}
+
+.sr-library-row .sr-lib-preset {
+    margin: 0;
+    max-width: 320px;
+}
+
+.sr-reason-details {
+    margin-top: 6px;
+    font-size: 0.82em;
+    color: var(--sr-text-subtle);
+    line-height: 1.4;
+}
+
+.sr-error-detail {
+    margin-top: 8px;
+}
+
+.sr-error-detail summary {
+    cursor: pointer;
+    color: #f44336;
+    font-size: 0.85em;
+}
+
+.sr-error-detail pre {
+    margin: 6px 0 0;
+    max-height: 220px;
+    overflow: auto;
+    padding: 8px;
+    border-radius: 6px;
+    background: var(--sr-surface-2);
+    font-size: 0.75em;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 .sr-check-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));

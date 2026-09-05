@@ -37,9 +37,65 @@ public class EncodePlanner
         return EncodeAction.Remux;
     }
 
+    public static PluginConfiguration WithLibraryPreset(PluginConfiguration config, string? libraryId)
+    {
+        if (string.IsNullOrWhiteSpace(libraryId) || config.LibraryOverrides is null || config.LibraryOverrides.Count == 0)
+        {
+            return config;
+        }
+
+        var normalized = libraryId.Replace("-", string.Empty, StringComparison.Ordinal);
+        var ov = config.LibraryOverrides.FirstOrDefault(o =>
+            !string.IsNullOrWhiteSpace(o.LibraryId)
+            && (o.LibraryId.Equals(libraryId, StringComparison.OrdinalIgnoreCase)
+                || o.LibraryId.Replace("-", string.Empty, StringComparison.Ordinal)
+                    .Equals(normalized, StringComparison.OrdinalIgnoreCase)));
+        if (ov is null
+            || string.IsNullOrWhiteSpace(ov.EncodingPreset)
+            || ov.EncodingPreset.Equals("Inherit", StringComparison.OrdinalIgnoreCase))
+        {
+            return config;
+        }
+
+        return new PluginConfiguration
+        {
+            Enabled = config.Enabled,
+            AutoDirectPreTranscode = config.AutoDirectPreTranscode,
+            SelectedLibraryIds = config.SelectedLibraryIds,
+            IncludeExtras = config.IncludeExtras,
+            EncodingPreset = ov.EncodingPreset,
+            LibraryOverrides = config.LibraryOverrides,
+            AllowedContainers = config.AllowedContainers,
+            AllowedVideoCodecs = config.AllowedVideoCodecs,
+            AllowedAudioCodecs = config.AllowedAudioCodecs,
+            AllowedVideoRanges = config.AllowedVideoRanges,
+            MaxFileSizeGiB = config.MaxFileSizeGiB,
+            MaxVideoBitrateMbps = config.MaxVideoBitrateMbps,
+            Crf = config.Crf,
+            ResolutionCap = config.ResolutionCap,
+            HardwareAccel = config.HardwareAccel,
+            AudioChannels = config.AudioChannels,
+            ToneMapHdr = config.ToneMapHdr,
+            OutputContainer = config.OutputContainer,
+            KeepAllAudioAndSubtitles = config.KeepAllAudioAndSubtitles,
+            ReplacementPolicy = config.ReplacementPolicy,
+            BackupFolder = config.BackupFolder,
+            BackupRetentionDays = config.BackupRetentionDays,
+            VerifyBeforeReplace = config.VerifyBeforeReplace,
+            DiscardIfOutputLarger = config.DiscardIfOutputLarger,
+            ScanIntervalHours = config.ScanIntervalHours,
+            ItemSettleDelaySeconds = config.ItemSettleDelaySeconds,
+            MaxConcurrentJobs = config.MaxConcurrentJobs,
+            PauseDuringPlayback = config.PauseDuringPlayback,
+            WorkerPaused = config.WorkerPaused,
+            FfmpegPreset = config.FfmpegPreset
+        };
+    }
+
     public static string DestinationContainer(PluginConfiguration config)
     {
-        return config.EncodingPreset.Equals("HevcCompact", StringComparison.OrdinalIgnoreCase) ? "mp4" : "mp4";
+        var c = (config.OutputContainer ?? "mp4").Trim().ToLowerInvariant();
+        return c is "mkv" or "mp4" ? c : "mp4";
     }
 
     public static string DestinationVideoCodec(PluginConfiguration config)

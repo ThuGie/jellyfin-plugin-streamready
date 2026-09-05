@@ -345,7 +345,7 @@ public class JobStore
         }
     }
 
-    public void Fail(string id, string error)
+    public void Fail(string id, string error, string? errorDetail = null)
     {
         lock (_gate)
         {
@@ -357,12 +357,13 @@ public class JobStore
 
             job.Status = JobStatus.Failed;
             job.Error = error;
+            job.ErrorDetail = errorDetail;
             job.FinishedAt = DateTime.UtcNow;
             SaveLocked();
         }
     }
 
-    public void Requeue(string id)
+    public void Requeue(string id, string? statusDetail = null)
     {
         lock (_gate)
         {
@@ -374,10 +375,18 @@ public class JobStore
 
             job.Status = JobStatus.Queued;
             job.Error = null;
+            job.ErrorDetail = null;
             job.Progress = 0;
+            job.Speed = null;
+            job.Eta = null;
             job.StartedAt = null;
             job.FinishedAt = null;
             job.QueuedAt = DateTime.UtcNow;
+            if (!string.IsNullOrWhiteSpace(statusDetail))
+            {
+                job.StatusDetail = statusDetail;
+            }
+
             SaveLocked();
         }
     }
@@ -518,6 +527,7 @@ public class JobStore
             Bitrate = source.Bitrate,
             RuntimeTicks = source.RuntimeTicks,
             Reasons = [.. source.Reasons],
+            ReasonDetails = [.. source.ReasonDetails],
             PlannedAction = source.PlannedAction,
             Ignored = source.Ignored,
             AddedAt = source.AddedAt
@@ -537,6 +547,7 @@ public class JobStore
             Status = source.Status,
             Progress = source.Progress,
             Error = source.Error,
+            ErrorDetail = source.ErrorDetail,
             QueuedAt = source.QueuedAt,
             StartedAt = source.StartedAt,
             FinishedAt = source.FinishedAt,

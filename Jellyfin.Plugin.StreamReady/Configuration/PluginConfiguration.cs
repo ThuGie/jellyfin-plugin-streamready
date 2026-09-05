@@ -14,6 +14,9 @@ public class PluginConfiguration : BasePluginConfiguration
 
     public string EncodingPreset { get; set; } = "Balanced";
 
+    /// <summary>Per-library EncodingPreset overrides (empty/Inherit = use global).</summary>
+    public List<LibraryOverride> LibraryOverrides { get; set; } = [];
+
     public string AllowedContainers { get; set; } = "mp4,m4v,mov";
 
     public string AllowedVideoCodecs { get; set; } = "h264";
@@ -36,6 +39,12 @@ public class PluginConfiguration : BasePluginConfiguration
 
     public bool ToneMapHdr { get; set; } = true;
 
+    /// <summary>Output container: mp4 or mkv.</summary>
+    public string OutputContainer { get; set; } = "mp4";
+
+    /// <summary>Map all audio + subtitle streams (preferred with mkv).</summary>
+    public bool KeepAllAudioAndSubtitles { get; set; } = true;
+
     public string ReplacementPolicy { get; set; } = "Backup";
 
     public string BackupFolder { get; set; } = string.Empty;
@@ -44,11 +53,28 @@ public class PluginConfiguration : BasePluginConfiguration
 
     public bool VerifyBeforeReplace { get; set; } = true;
 
+    /// <summary>Skip replace when encoded file is larger than the source.</summary>
+    public bool DiscardIfOutputLarger { get; set; } = true;
+
     public int ScanIntervalHours { get; set; } = 6;
+
+    /// <summary>Wait after ItemAdded/Updated before analyzing (Radarr/Sonarr copies).</summary>
+    public int ItemSettleDelaySeconds { get; set; } = 120;
 
     public int MaxConcurrentJobs { get; set; } = 1;
 
     public bool PauseDuringPlayback { get; set; } = true;
 
+    /// <summary>Persisted worker pause (survives restart).</summary>
+    public bool WorkerPaused { get; set; }
+
     public string FfmpegPreset { get; set; } = "medium";
+}
+
+public class LibraryOverride
+{
+    public string LibraryId { get; set; } = string.Empty;
+
+    /// <summary>Empty or Inherit = use global EncodingPreset.</summary>
+    public string EncodingPreset { get; set; } = string.Empty;
 }

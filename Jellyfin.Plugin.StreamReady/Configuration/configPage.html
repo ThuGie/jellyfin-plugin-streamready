@@ -111,6 +111,8 @@
                                 </select>
                                 <button type="button" class="raised emby-button" id="srEncodeSelected">Encode selected</button>
                                 <button type="button" class="raised emby-button" id="srEncodeVisible">Encode all visible</button>
+                                <button type="button" class="raised emby-button" id="srEncodeMatching">Encode all matching</button>
+                                <button type="button" class="raised emby-button" id="srLoadMore" style="display:none;">Load more</button>
                             </div>
                             <div id="srCandidates" class="sr-table-wrap"></div>
                         </div>
@@ -138,24 +140,21 @@
                     <fieldset>
                         <legend class="sectionTitle"><i class="material-icons sr-legend-icon">inventory_2</i>Allow lists</legend>
                         <div class="configSection">
-                            <div class="inputContainer">
-                                <label class="inputLabel" for="AllowedContainers">Allowed containers</label>
-                                <input is="emby-input" id="AllowedContainers" type="text" />
-                            </div>
-                            <div class="sr-setting-description"><div class="fieldDescription">Comma-separated. Example: mp4,m4v,mov</div></div>
-                            <div class="inputContainer">
-                                <label class="inputLabel" for="AllowedVideoCodecs">Allowed video codecs</label>
-                                <input is="emby-input" id="AllowedVideoCodecs" type="text" />
-                            </div>
-                            <div class="sr-setting-description"><div class="fieldDescription">Example: h264 or h264,hevc</div></div>
+                            <div class="inputLabel">Allowed containers</div>
+                            <div id="srContainers" class="sr-check-grid"></div>
+                            <div class="sr-setting-description"><div class="fieldDescription">Uncheck containers your clients cannot Direct Play (e.g. ts, mkv).</div></div>
+
+                            <div class="inputLabel" style="margin-top:12px;">Allowed video codecs</div>
+                            <div id="srVideoCodecs" class="sr-check-grid"></div>
+                            <div class="sr-setting-description"><div class="fieldDescription">H.264 only is safest. Add HEVC if your TVs/apps Direct Play it.</div></div>
 
                             <div class="inputLabel" style="margin-top:12px;">Allowed audio codecs</div>
                             <div id="srAudioCodecs" class="sr-check-grid"></div>
-                            <div class="sr-setting-description"><div class="fieldDescription">Uncheck TrueHD / DTS-HD / FLAC if TVs and browsers force a live transcode. Project Hail Mary’s TrueHD would need encoding unless you allow it.</div></div>
+                            <div class="sr-setting-description"><div class="fieldDescription">Uncheck TrueHD / DTS-HD / FLAC if TVs and browsers force a live transcode.</div></div>
 
                             <div class="inputLabel" style="margin-top:12px;">Allowed video ranges</div>
                             <div id="srVideoRanges" class="sr-check-grid"></div>
-                            <div class="sr-setting-description"><div class="fieldDescription">Matches Jellyfin’s VideoRangeType. <strong>DOVIWithEL</strong> is Dolby Vision Profile 7 (dual layer) — often not Direct Playable; leave unchecked to convert. SDR alone is the safest default.</div></div>
+                            <div class="sr-setting-description"><div class="fieldDescription">Checked ranges are kept (Direct Play). Unchecked HDR/DV is tone-mapped to SDR when that setting is on. <strong>DOVIWithEL</strong> is Profile 7 dual-layer — usually leave unchecked.</div></div>
                         </div>
                     </fieldset>
                     <fieldset>
@@ -187,7 +186,16 @@
                                     <option value="HevcCompact">HEVC compact — MP4, HEVC 8-bit, AAC 5.1, SDR</option>
                                 </select>
                             </div>
-                            <div class="sr-setting-description"><div class="fieldDescription">Controls the output format. Compatibility rules above still decide *whether* a file is listed.</div></div>
+                            <div class="sr-setting-description"><div class="fieldDescription">Controls codecs/channels defaults. Compatibility rules still decide whether a file is listed.</div></div>
+                            <div class="selectContainer">
+                                <label class="inputLabel" for="OutputContainer">Output container</label>
+                                <select is="emby-select" id="OutputContainer">
+                                    <option value="mp4">MP4</option>
+                                    <option value="mkv">MKV (better for multi-audio / subs)</option>
+                                </select>
+                            </div>
+                            <div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" id="KeepAllAudioAndSubtitles"/><span>Keep all audio tracks and subtitles</span></label></div>
+                            <div class="sr-setting-description"><div class="fieldDescription">Recommended with MKV. On MP4, text subs use mov_text; bitmap subs may be skipped.</div></div>
                             <div class="inputContainer">
                                 <label class="inputLabel" for="Crf">CRF / quality (0 = preset default)</label>
                                 <input is="emby-input" id="Crf" type="number" min="0" max="51" />
@@ -218,7 +226,8 @@
                                     <option value="6">5.1</option>
                                 </select>
                             </div>
-                            <div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" id="ToneMapHdr"/><span>Tone-map HDR / Dolby Vision to SDR</span></label></div>
+                            <div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" id="ToneMapHdr"/><span>Tone-map disallowed HDR / Dolby Vision to SDR</span></label></div>
+                            <div class="sr-setting-description"><div class="fieldDescription">Only converts ranges you did <em>not</em> check under Compatibility. Allowed HDR10/DOVI is kept.</div></div>
                             <div class="selectContainer">
                                 <label class="inputLabel" for="FfmpegPreset">x264 / x265 speed preset</label>
                                 <select is="emby-select" id="FfmpegPreset">
@@ -275,6 +284,7 @@
                                 <input is="emby-input" id="BackupRetentionDays" type="number" min="0" />
                             </div>
                             <div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" id="VerifyBeforeReplace"/><span>Verify duration before replacing</span></label></div>
+                            <div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" id="DiscardIfOutputLarger"/><span>Discard encode if output is larger than the source</span></label></div>
                         </div>
                     </fieldset>
                 </div>
@@ -288,6 +298,11 @@
                                 <input is="emby-input" id="ScanIntervalHours" type="number" min="0" />
                             </div>
                             <div class="sr-setting-description"><div class="fieldDescription">Scans fill Needs Encoding. Auto Direct Pre-Transcode then also queues matches. You can also run Dashboard → Scheduled Tasks → StreamReady library scan.</div></div>
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="ItemSettleDelaySeconds">Settle delay for new files (seconds)</label>
+                                <input is="emby-input" id="ItemSettleDelaySeconds" type="number" min="0" />
+                            </div>
+                            <div class="sr-setting-description"><div class="fieldDescription">Wait after library ItemAdded/Updated before analyzing (helps Radarr/Sonarr copies). 0 = analyze immediately. Default 120.</div></div>
                             <div class="inputContainer">
                                 <label class="inputLabel" for="MaxConcurrentJobs">Max concurrent encodes</label>
                                 <input is="emby-input" id="MaxConcurrentJobs" type="number" min="1" max="2" />
@@ -328,7 +343,32 @@
             var pluginId = '9d2e8c4a-1f6b-4a73-b8e0-5c9f3a7d2e11';
             var pollTimer = null;
             var visibleCandidates = [];
+            var candidatesSkip = 0;
+            var candidatesTotal = 0;
+            var candidatesPageSize = 200;
+            var libraryOverrides = [];
             var scanning = false;
+
+            var CONTAINER_OPTIONS = [
+                { id: 'mp4', label: 'MP4' },
+                { id: 'm4v', label: 'M4V' },
+                { id: 'mov', label: 'MOV' },
+                { id: 'mkv', label: 'MKV' },
+                { id: 'avi', label: 'AVI' },
+                { id: 'ts', label: 'TS' },
+                { id: 'm2ts', label: 'M2TS' },
+                { id: 'webm', label: 'WebM' }
+            ];
+
+            var VIDEO_CODEC_OPTIONS = [
+                { id: 'h264', label: 'H.264' },
+                { id: 'hevc', label: 'HEVC / H.265' },
+                { id: 'av1', label: 'AV1' },
+                { id: 'mpeg2video', label: 'MPEG-2' },
+                { id: 'mpeg4', label: 'MPEG-4' },
+                { id: 'vc1', label: 'VC-1' },
+                { id: 'vp9', label: 'VP9' }
+            ];
 
             // Jellyfin VideoRangeType (exact names as reported on items, e.g. DOVIWithEL).
             var VIDEO_RANGE_OPTIONS = [
@@ -521,7 +561,7 @@
                     var match = el.getAttribute('data-tab') === id || el.id === id;
                     el.classList.toggle('active', match);
                 });
-                if (id === 'needs') loadCandidates();
+                if (id === 'needs') loadCandidates(true);
                 if (id === 'queue') loadQueue();
             }
 
@@ -560,30 +600,44 @@
                 ]).then(function (results) {
                     var config = results[0];
                     var libraries = normalizeLibraries(results[1]);
-                    ['Enabled', 'AutoDirectPreTranscode', 'IncludeExtras', 'ToneMapHdr', 'VerifyBeforeReplace', 'PauseDuringPlayback'].forEach(function (id) {
+                    ['Enabled', 'AutoDirectPreTranscode', 'IncludeExtras', 'ToneMapHdr', 'VerifyBeforeReplace', 'PauseDuringPlayback', 'KeepAllAudioAndSubtitles', 'DiscardIfOutputLarger'].forEach(function (id) {
                         var el = val(id);
                         if (el) el.checked = !!config[id];
                     });
-                    ['AllowedContainers', 'AllowedVideoCodecs', 'EncodingPreset', 'HardwareAccel', 'ReplacementPolicy', 'BackupFolder', 'FfmpegPreset'].forEach(function (id) {
+                    ['EncodingPreset', 'HardwareAccel', 'ReplacementPolicy', 'BackupFolder', 'FfmpegPreset', 'OutputContainer'].forEach(function (id) {
                         var el = val(id);
                         if (el && config[id] != null) el.value = config[id];
                     });
-                    ['MaxFileSizeGiB', 'MaxVideoBitrateMbps', 'Crf', 'ResolutionCap', 'AudioChannels', 'BackupRetentionDays', 'ScanIntervalHours', 'MaxConcurrentJobs'].forEach(function (id) {
+                    ['MaxFileSizeGiB', 'MaxVideoBitrateMbps', 'Crf', 'ResolutionCap', 'AudioChannels', 'BackupRetentionDays', 'ScanIntervalHours', 'MaxConcurrentJobs', 'ItemSettleDelaySeconds'].forEach(function (id) {
                         var el = val(id);
                         if (el && config[id] != null) el.value = config[id];
                     });
+                    libraryOverrides = config.LibraryOverrides || config.libraryOverrides || [];
+                    if (!Array.isArray(libraryOverrides)) libraryOverrides = [];
+                    renderCheckGrid('srContainers', CONTAINER_OPTIONS, config.AllowedContainers || 'mp4,m4v,mov', 'sr-container');
+                    renderCheckGrid('srVideoCodecs', VIDEO_CODEC_OPTIONS, config.AllowedVideoCodecs || 'h264', 'sr-video-codec');
                     renderCheckGrid('srAudioCodecs', AUDIO_CODEC_OPTIONS, config.AllowedAudioCodecs || 'aac,ac3,eac3,mp3', 'sr-audio-codec');
                     renderCheckGrid('srVideoRanges', VIDEO_RANGE_OPTIONS, config.AllowedVideoRanges || 'SDR', 'sr-video-range');
                     renderLibraries(libraries, (config.SelectedLibraryIds || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean));
                     Dashboard.hideLoadingMsg();
                     clearDirty();
                     refreshStatus();
-                    loadCandidates();
+                    loadCandidates(true);
                     loadQueue();
                 }).catch(function () {
                     Dashboard.hideLoadingMsg();
                     Dashboard.alert('Failed to load StreamReady settings');
                 });
+            }
+
+            function overridePresetFor(libraryId) {
+                var norm = String(libraryId || '').replace(/-/g, '').toLowerCase();
+                for (var i = 0; i < libraryOverrides.length; i++) {
+                    var ov = libraryOverrides[i];
+                    var oid = String(ov.LibraryId || ov.libraryId || '').replace(/-/g, '').toLowerCase();
+                    if (oid === norm) return ov.EncodingPreset || ov.encodingPreset || '';
+                }
+                return '';
             }
 
             function renderLibraries(libraries, selected) {
@@ -597,8 +651,30 @@
                     var id = lib.id || '';
                     var dashed = id.length === 32 ? id.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5') : id;
                     var checked = selected.indexOf(id) >= 0 || selected.indexOf(dashed) >= 0 || selected.indexOf((id || '').replace(/-/g, '')) >= 0 ? ' checked' : '';
-                    return '<div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" class="sr-lib" data-id="' + escapeHtml(id) + '"' + checked + '/><span>' + escapeHtml(lib.name) + ' <em>(' + escapeHtml(lib.collectionType || 'mixed') + ')</em></span></label></div>';
+                    var preset = overridePresetFor(id);
+                    var opts = [
+                        { v: '', t: 'Inherit (global preset)' },
+                        { v: 'MaxCompatibility', t: 'Max compatibility' },
+                        { v: 'Balanced', t: 'Balanced' },
+                        { v: 'HevcCompact', t: 'HEVC compact' }
+                    ].map(function (o) {
+                        return '<option value="' + o.v + '"' + (preset === o.v ? ' selected' : '') + '>' + o.t + '</option>';
+                    }).join('');
+                    return '<div class="sr-library-row">'
+                        + '<div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" class="sr-lib" data-id="' + escapeHtml(id) + '"' + checked + '/><span>' + escapeHtml(lib.name) + ' <em>(' + escapeHtml(lib.collectionType || 'mixed') + ')</em></span></label></div>'
+                        + '<div class="selectContainer sr-lib-preset"><label class="inputLabel">Encode preset</label>'
+                        + '<select is="emby-select" class="sr-lib-preset-select" data-id="' + escapeHtml(id) + '">' + opts + '</select></div></div>';
                 }).join('');
+            }
+
+            function collectLibraryOverrides() {
+                var page = getPage();
+                if (!page) return [];
+                return Array.prototype.slice.call(page.querySelectorAll('.sr-lib-preset-select')).map(function (el) {
+                    var preset = el.value || '';
+                    if (!preset) return null;
+                    return { LibraryId: el.getAttribute('data-id'), EncodingPreset: preset };
+                }).filter(Boolean);
             }
 
             function selectedLibraries() {
@@ -613,14 +689,16 @@
                 if (e) e.preventDefault();
                 Dashboard.showLoadingMsg();
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-                    ['Enabled', 'AutoDirectPreTranscode', 'IncludeExtras', 'ToneMapHdr', 'VerifyBeforeReplace', 'PauseDuringPlayback'].forEach(function (id) {
+                    ['Enabled', 'AutoDirectPreTranscode', 'IncludeExtras', 'ToneMapHdr', 'VerifyBeforeReplace', 'PauseDuringPlayback', 'KeepAllAudioAndSubtitles', 'DiscardIfOutputLarger'].forEach(function (id) {
                         var el = val(id);
                         if (el) config[id] = !!el.checked;
                     });
-                    ['AllowedContainers', 'AllowedVideoCodecs', 'EncodingPreset', 'HardwareAccel', 'ReplacementPolicy', 'BackupFolder', 'FfmpegPreset'].forEach(function (id) {
+                    ['EncodingPreset', 'HardwareAccel', 'ReplacementPolicy', 'BackupFolder', 'FfmpegPreset', 'OutputContainer'].forEach(function (id) {
                         var el = val(id);
                         if (el) config[id] = el.value;
                     });
+                    config.AllowedContainers = selectedCheckCsv('sr-container');
+                    config.AllowedVideoCodecs = selectedCheckCsv('sr-video-codec');
                     config.AllowedAudioCodecs = selectedCheckCsv('sr-audio-codec');
                     config.AllowedVideoRanges = selectedCheckCsv('sr-video-range');
                     config.MaxFileSizeGiB = parseFloat((val('MaxFileSizeGiB') || {}).value) || 0;
@@ -631,7 +709,11 @@
                     config.BackupRetentionDays = parseInt((val('BackupRetentionDays') || {}).value, 10) || 0;
                     config.ScanIntervalHours = parseInt((val('ScanIntervalHours') || {}).value, 10) || 0;
                     config.MaxConcurrentJobs = parseInt((val('MaxConcurrentJobs') || {}).value, 10) || 1;
+                    config.ItemSettleDelaySeconds = parseInt((val('ItemSettleDelaySeconds') || {}).value, 10);
+                    if (isNaN(config.ItemSettleDelaySeconds) || config.ItemSettleDelaySeconds < 0) config.ItemSettleDelaySeconds = 120;
                     config.SelectedLibraryIds = selectedLibraries();
+                    config.LibraryOverrides = collectLibraryOverrides();
+                    libraryOverrides = config.LibraryOverrides;
                     ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
                         clearDirty();
                         Dashboard.processPluginConfigurationUpdateResult(result);
@@ -720,12 +802,22 @@
                 return '<button type="button" class="sr-service-card sr-state-' + state + '"' + jump + '><i class="material-icons sr-service-icon">' + icon + '</i><div class="sr-service-body"><div class="sr-service-name">' + escapeHtml(name) + '</div><div class="sr-service-detail">' + escapeHtml(detail || '') + '</div></div></button>';
             }
 
-            function loadCandidates() {
+            function loadCandidates(reset) {
+                if (reset === true) {
+                    candidatesSkip = 0;
+                    visibleCandidates = [];
+                }
                 var typeEl = val('srFilterType');
                 var reasonEl = val('srFilterReason');
                 var type = typeEl ? typeEl.value : '';
                 var reason = reasonEl ? reasonEl.value : '';
-                var q = ['limit=200', 'skip=0'];
+                var limit = candidatesPageSize;
+                var skip = candidatesSkip;
+                if (reset === 'soft') {
+                    limit = Math.max(candidatesPageSize, visibleCandidates.length || candidatesPageSize);
+                    skip = 0;
+                }
+                var q = ['limit=' + limit, 'skip=' + skip];
                 if (type) q.push('itemType=' + encodeURIComponent(type));
                 if (reason) q.push('reason=' + encodeURIComponent(reason));
                 api('/candidates?' + q.join('&')).then(function (payload) {
@@ -740,8 +832,14 @@
                         total = payload.total != null ? payload.total : (payload.Total != null ? payload.Total : rows.length);
                     }
                     if (!Array.isArray(rows)) rows = [];
-                    visibleCandidates = rows;
-                    renderCandidates(visibleCandidates, total);
+                    if (reset === true || reset === 'soft' || skip === 0) {
+                        visibleCandidates = rows;
+                    } else {
+                        visibleCandidates = visibleCandidates.concat(rows);
+                    }
+                    candidatesTotal = total;
+                    candidatesSkip = visibleCandidates.length;
+                    renderCandidates(visibleCandidates, candidatesTotal);
                 }).catch(function (err) {
                     console.warn('StreamReady candidates failed', err);
                     var host = val('srCandidates');
@@ -751,21 +849,25 @@
 
             function renderCandidates(rows, total) {
                 var host = val('srCandidates');
+                var loadMoreBtn = val('srLoadMore');
                 if (!host) return;
                 total = total || rows.length;
+                if (loadMoreBtn) loadMoreBtn.style.display = rows.length < total ? '' : 'none';
                 if (!rows.length) {
                     host.innerHTML = '<div class="sr-empty"><p>Nothing needs encoding yet.</p><p>Save your libraries, then scan. Matches show up here so you can encode one file or a selection.</p><button type="button" class="raised button-submit emby-button sr-scan-now">Scan now</button></div>';
                     return;
                 }
                 var html = '';
-                if (total > rows.length) {
-                    html += '<div class="sr-note-banner" style="margin-bottom:12px;"><i class="material-icons sr-info-icon">info</i><div>Showing ' + rows.length + ' of ' + total + ' files (largest first). Use filters or Encode all visible for this page.</div></div>';
-                }
+                html += '<div class="sr-note-banner" style="margin-bottom:12px;"><i class="material-icons sr-info-icon">info</i><div>Showing ' + rows.length + ' of ' + total + ' files (largest first). Encode all matching queues every filtered match (up to 2000).</div></div>';
                 html += '<table class="sr-table"><thead><tr><th></th><th>Title</th><th>Why</th><th>Plan</th><th>Size</th><th></th></tr></thead><tbody>';
                 rows.forEach(function (row) {
                     var id = row.id || row.Id;
+                    var details = row.reasonDetails || row.ReasonDetails || [];
+                    var detailHtml = Array.isArray(details) && details.length
+                        ? '<div class="sr-reason-details">' + details.map(function (d) { return '<div>' + escapeHtml(d) + '</div>'; }).join('') + '</div>'
+                        : '';
                     html += '<tr><td><input type="checkbox" class="sr-pick" data-id="' + id + '"/></td>';
-                    html += '<td><strong>' + escapeHtml(row.name || row.Name) + '</strong><div class="sr-service-detail">' + escapeHtml(((row.seriesName || row.SeriesName) ? (row.seriesName || row.SeriesName) + ' · ' : '') + (row.itemType || row.ItemType) + ' · ' + (row.container || row.Container) + ' · ' + (row.videoCodec || row.VideoCodec) + ' / ' + (row.audioCodec || row.AudioCodec) + ' · ' + (row.videoRange || row.VideoRange)) + '</div></td>';
+                    html += '<td><strong>' + escapeHtml(row.name || row.Name) + '</strong><div class="sr-service-detail">' + escapeHtml(((row.seriesName || row.SeriesName) ? (row.seriesName || row.SeriesName) + ' · ' : '') + (row.itemType || row.ItemType) + ' · ' + (row.container || row.Container) + ' · ' + (row.videoCodec || row.VideoCodec) + ' / ' + (row.audioCodec || row.AudioCodec) + ' · ' + (row.videoRange || row.VideoRange)) + '</div>' + detailHtml + '</td>';
                     html += '<td>' + (row.reasons || row.Reasons || []).map(function (r) { return '<span class="sr-chip">' + escapeHtml(r) + '</span>'; }).join('') + '</td>';
                     html += '<td><span class="sr-chip sr-' + String(row.plannedAction || row.PlannedAction || '').toLowerCase() + '">' + escapeHtml(row.plannedAction || row.PlannedAction) + '</span></td>';
                     html += '<td>' + escapeHtml(row.sizeLabel || row.SizeLabel || '') + '</td>';
@@ -789,15 +891,21 @@
                     rows.forEach(function (row) {
                         var detail = pick(row, 'statusDetail')
                             || [row.action, pick(row, 'videoEncoder'), pick(row, 'hardwarePath'), pick(row, 'toneMap') ? 'tone-map ON' : ''].filter(Boolean).join(' · ');
-                        if (row.error) detail += (detail ? ' · ' : '') + row.error;
+                        var err = pick(row, 'error') || '';
+                        if (err) detail += (detail ? ' · ' : '') + err;
+                        var errDetail = pick(row, 'errorDetail') || '';
                         var eta = pick(row, 'eta') || '';
                         var speed = pick(row, 'speed') || '';
                         var progressLabel = Math.round(row.progress || 0) + '%';
-                        if (row.status === 'Running') {
+                        if (row.status === 'Running' || row.status === 'running') {
                             if (eta) progressLabel += ' · ' + eta;
                             if (speed) progressLabel += ' · ' + speed;
                         }
-                        html += '<tr><td><strong>' + escapeHtml(row.name) + '</strong><div class="sr-service-detail">' + escapeHtml(detail) + '</div></td>';
+                        html += '<tr><td><strong>' + escapeHtml(row.name) + '</strong><div class="sr-service-detail">' + escapeHtml(detail) + '</div>';
+                        if (errDetail && (row.status === 'Failed' || row.status === 'failed')) {
+                            html += '<details class="sr-error-detail"><summary>FFmpeg log</summary><pre>' + escapeHtml(errDetail) + '</pre></details>';
+                        }
+                        html += '</td>';
                         html += '<td>' + escapeHtml(row.status) + '</td>';
                         html += '<td><div class="sr-progress"><span style="width:' + Math.round(row.progress || 0) + '%"></span></div> ' + escapeHtml(progressLabel) + '</td>';
                         html += '<td class="sr-row-actions">';
@@ -843,7 +951,7 @@
                     Dashboard.alert('Scan complete. ' + found + ' file(s) need encoding.');
                     refreshStatus();
                     showTab('needs');
-                    loadCandidates();
+                    loadCandidates(true);
                 }).catch(function (err) {
                     scanning = false;
                     Dashboard.hideLoadingMsg();
@@ -908,7 +1016,7 @@
                     var active = page && page.querySelector('.jellyfin-tab-content.active');
                     var tab = active && (active.getAttribute('data-tab') || active.id);
                     if (tab === 'queue') loadQueue();
-                    if (tab === 'needs') loadCandidates();
+                    if (tab === 'needs') loadCandidates('soft');
                 }, 2000);
             }
 
@@ -962,13 +1070,36 @@
                     }
                     if (ev.target.closest('#srEncodeVisible')) {
                         ev.preventDefault();
-                        var allIds = visibleCandidates.map(function (c) { return c.id; });
+                        var allIds = visibleCandidates.map(function (c) { return c.id || c.Id; });
                         if (!allIds.length) { Dashboard.alert('Nothing visible to encode.'); return; }
                         api('/candidates/encode', 'POST', { Ids: allIds }).then(function (r) {
                             Dashboard.alert('Queued ' + (r.queued || allIds.length) + ' file(s).');
                             showTab('queue');
                             loadQueue();
                         });
+                        return;
+                    }
+                    if (ev.target.closest('#srEncodeMatching')) {
+                        ev.preventDefault();
+                        var typeElM = val('srFilterType');
+                        var reasonElM = val('srFilterReason');
+                        var qm = [];
+                        if (typeElM && typeElM.value) qm.push('itemType=' + encodeURIComponent(typeElM.value));
+                        if (reasonElM && reasonElM.value) qm.push('reason=' + encodeURIComponent(reasonElM.value));
+                        var path = '/candidates/encodeMatching' + (qm.length ? '?' + qm.join('&') : '');
+                        api(path, 'POST').then(function (r) {
+                            var queued = pick(r, 'queued') || 0;
+                            var matched = pick(r, 'matched') || queued;
+                            var capped = !!pick(r, 'capped');
+                            Dashboard.alert('Queued ' + queued + ' of ' + matched + ' matching file(s).' + (capped ? ' (capped at 2000)' : ''));
+                            showTab('queue');
+                            loadQueue();
+                        });
+                        return;
+                    }
+                    if (ev.target.closest('#srLoadMore')) {
+                        ev.preventDefault();
+                        loadCandidates(false);
                         return;
                     }
                     if (ev.target.closest('#toggleDescriptionsBtn')) {
@@ -994,7 +1125,7 @@
                     var retry = ev.target.closest('.sr-retry');
                     var skip = ev.target.closest('.sr-skip');
                     if (encode) api('/candidates/' + encode.getAttribute('data-id') + '/encode', 'POST').then(function () { showTab('queue'); loadQueue(); });
-                    if (ignore) api('/candidates/' + ignore.getAttribute('data-id') + '/ignore', 'POST').then(loadCandidates);
+                    if (ignore) api('/candidates/' + ignore.getAttribute('data-id') + '/ignore', 'POST').then(function () { loadCandidates(true); });
                     if (cancel) api('/queue/' + cancel.getAttribute('data-id') + '/cancel', 'POST').then(loadQueue);
                     if (retry) api('/queue/' + retry.getAttribute('data-id') + '/retry', 'POST').then(loadQueue);
                     if (skip) api('/queue/' + skip.getAttribute('data-id') + '/skip', 'POST').then(loadQueue);
@@ -1016,7 +1147,7 @@
                 document.addEventListener('change', function (ev) {
                     var page = ev.target.closest && ev.target.closest('#StreamReadyPage');
                     if (!page) return;
-                    if (ev.target.id === 'srFilterType' || ev.target.id === 'srFilterReason') loadCandidates();
+                    if (ev.target.id === 'srFilterType' || ev.target.id === 'srFilterReason') loadCandidates(true);
                     if (ev.target.closest('#StreamReadyForm')) markDirty();
                 });
 

@@ -11,6 +11,7 @@ public class CompatibilityAnalyzer
 {
     public CompatibilityResult Analyze(BaseItem item, PluginConfiguration config, string libraryId, string libraryName)
     {
+        var effective = EncodePlanner.WithLibraryPreset(config, libraryId);
         var result = new CompatibilityResult();
         var video = item.GetMediaStreams().FirstOrDefault(s => s.Type == MediaStreamType.Video);
         var audio = item.GetMediaStreams().FirstOrDefault(s => s.Type == MediaStreamType.Audio && s.IsDefault)
@@ -23,52 +24,67 @@ public class CompatibilityAnalyzer
         var size = item.Size ?? SafeLength(item.Path);
         var bitrate = video?.BitRate ?? 0;
 
-        var allowedContainers = Split(config.AllowedContainers);
-        var allowedVideo = Split(config.AllowedVideoCodecs).Select(NormalizeCodec).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var allowedAudio = Split(config.AllowedAudioCodecs).Select(NormalizeCodec).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var allowedRanges = Split(config.AllowedVideoRanges).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var allowedContainers = Split(effective.AllowedContainers);
+        var allowedVideo = Split(effective.AllowedVideoCodecs).Select(NormalizeCodec).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var allowedAudio = Split(effective.AllowedAudioCodecs).Select(NormalizeCodec).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var allowedRanges = Split(effective.AllowedVideoRanges).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var reasons = new List<string>();
+        var details = new List<string>();
         var containerBad = allowedContainers.Count > 0 && !allowedContainers.Contains(container, StringComparer.OrdinalIgnoreCase);
         var videoBad = !string.IsNullOrEmpty(videoCodec) && allowedVideo.Count > 0 && !allowedVideo.Contains(videoCodec);
         var audioBad = !string.IsNullOrEmpty(audioCodec) && allowedAudio.Count > 0 && !allowedAudio.Contains(audioCodec);
         var rangeBad = !string.IsNullOrEmpty(range) && allowedRanges.Count > 0 && !RangeAllowed(range, allowedRanges);
-        var sizeBad = config.MaxFileSizeGiB > 0 && size > config.MaxFileSizeGiB * 1024d * 1024d * 1024d;
-        var bitrateBad = config.MaxVideoBitrateMbps > 0 && bitrate > config.MaxVideoBitrateMbps * 1_000_000d;
+        var sizeBad = effective.MaxFileSizeGiB > 0 && size > effective.MaxFileSizeGiB * 1024d * 1024d * 1024d;
+        var bitrateBad = effective.MaxVideoBitrateMbps > 0 && bitrate > effective.MaxVideoBitrateMbps * 1_000_000d;
 
         if (containerBad)
         {
             reasons.Add("Container");
+            details.Add($"Container: {container} not allowed (allowed: {string.Join(',', allowedContainers)})");
         }
 
         if (videoBad)
         {
             reasons.Add("Video");
+            details.Add($"Video: {videoCodec} not allowed (allowed: {string.Join(',', allowedVideo)})");
         }
 
         if (rangeBad)
         {
             reasons.Add("VideoRange");
+            details.Add($"VideoRange: {range} not allowed (allowed: {string.Join(',', allowedRanges)})");
         }
 
         if (audioBad)
         {
             reasons.Add("Audio");
+            details.Add($"Audio: {audioCodec} not allowed (allowed: {string.Join(',', allowedAudio)})");
         }
 
         if (sizeBad)
         {
             reasons.Add("Size");
+            var gib = size / (1024d * 1024d * 1024d);
+            details.Add($"Size: {gib:0.0} GiB > {effective.MaxFileSizeGiB:0.#} GiB");
         }
 
         if (bitrateBad)
         {
             reasons.Add("Bitrate");
+            var mbps = bitrate / 1_000_000d;
+            details.Add($"Bitrate: {mbps:0.0} Mbps > {effective.MaxVideoBitrateMbps:0.#} Mbps");
         }
 
         result.NeedsWork = reasons.Count > 0;
         result.Reasons = reasons;
-        result.PlannedAction = EncodePlanner.Decide(videoBad || rangeBad || sizeBad || bitrateBad, audioBad, containerBad, videoCodec, audioCodec, config);
+        result.PlannedAction = EncodePlanner.Decide(
+            videoBad || rangeBad || sizeBad || bitrateBad,
+            audioBad,
+            containerBad,
+            videoCodec,
+            audioCodec,
+            effective);
         result.Candidate = new CandidateRecord
         {
             Id = item.Id.ToString("N"),
@@ -89,6 +105,7 @@ public class CompatibilityAnalyzer
             Bitrate = bitrate > 0 ? bitrate : null,
             RuntimeTicks = item.RunTimeTicks,
             Reasons = reasons,
+            ReasonDetails = details,
             PlannedAction = result.PlannedAction,
             AddedAt = DateTime.UtcNow
         };
@@ -145,10 +162,20 @@ public class CompatibilityAnalyzer
             .ToList();
     }
 
-    private static bool RangeAllowed(string range, HashSet<string> allowed)
+    public static bool RangeAllowed(string range, HashSet<string> allowed)
     {
-        // Exact VideoRangeType match (SDR, HDR10, DOVIWithEL, …). Each checkbox is independent.
         return allowed.Contains(range, StringComparer.OrdinalIgnoreCase);
+    }
+
+    public static bool RangeAllowed(string range, string? allowedCsv)
+    {
+        var allowed = Split(allowedCsv).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (allowed.Count == 0)
+        {
+            return true;
+        }
+
+        return RangeAllowed(range, allowed);
     }
 
     private static long SafeLength(string path)

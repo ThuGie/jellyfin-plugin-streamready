@@ -231,6 +231,32 @@ public class StreamReadyController : ControllerBase
     }
 
     [Authorize]
+    [HttpPost("candidates/encodeMatching")]
+    public ActionResult<object> EncodeMatching(
+        [FromQuery] string? reason,
+        [FromQuery] string? itemType)
+    {
+        var list = _store.GetCandidates().AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(reason))
+        {
+            list = list.Where(c => c.Reasons.Contains(reason, StringComparer.OrdinalIgnoreCase));
+        }
+
+        if (!string.IsNullOrWhiteSpace(itemType))
+        {
+            list = list.Where(c => c.ItemType.Equals(itemType, StringComparison.OrdinalIgnoreCase));
+        }
+
+        var matching = list
+            .OrderByDescending(c => c.SizeBytes)
+            .Take(2000)
+            .ToList();
+        var jobs = _store.EnqueueMany(matching);
+        _worker.Resume();
+        return new { queued = jobs.Count, matched = matching.Count, capped = matching.Count >= 2000 };
+    }
+
+    [Authorize]
     [HttpPost("candidates/{id}/ignore")]
     public ActionResult Ignore(string id)
     {
@@ -313,6 +339,7 @@ public class StreamReadyController : ControllerBase
             height = c.Height,
             bitrate = c.Bitrate,
             reasons = c.Reasons,
+            reasonDetails = c.ReasonDetails,
             plannedAction = c.PlannedAction.ToString(),
             ignored = c.Ignored,
             addedAt = c.AddedAt
@@ -332,6 +359,7 @@ public class StreamReadyController : ControllerBase
             status = j.Status.ToString(),
             progress = j.Progress,
             error = j.Error,
+            errorDetail = j.ErrorDetail,
             queuedAt = j.QueuedAt,
             startedAt = j.StartedAt,
             finishedAt = j.FinishedAt,

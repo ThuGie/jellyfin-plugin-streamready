@@ -56,6 +56,8 @@ public class CandidateRecord
 
     public List<string> Reasons { get; set; } = [];
 
+    public List<string> ReasonDetails { get; set; } = [];
+
     public EncodeAction PlannedAction { get; set; } = EncodeAction.Full;
 
     public bool Ignored { get; set; }
@@ -82,6 +84,9 @@ public class EncodeJob
     public double Progress { get; set; }
 
     public string? Error { get; set; }
+
+    /// <summary>Longer ffmpeg stderr / failure detail for the queue UI.</summary>
+    public string? ErrorDetail { get; set; }
 
     public DateTime QueuedAt { get; set; } = DateTime.UtcNow;
 
