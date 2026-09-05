@@ -178,7 +178,8 @@ public class FfmpegRunner
         PluginConfiguration config,
         double durationSeconds,
         IProgress<double> progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? videoRange = null)
     {
         var ffmpeg = EncoderPath;
         if (!IsReady)
@@ -186,10 +187,48 @@ public class FfmpegRunner
             throw new InvalidOperationException("FFmpeg is not available. Check Dashboard → Playback → Transcoding.");
         }
 
-        var args = BuildArgs(inputPath, outputPath, action, config);
+        var args = BuildArgs(inputPath, outputPath, action, config, videoRange, forceSoftware: false);
         _logger.LogInformation("StreamReady ffmpeg ({Hw}): {Bin} {Args}", DescribeHardware(config), ffmpeg, args);
 
-        var (exit, _, stderr) = await RunProcessAsync(
+        var (exit, _, stderr) = await RunEncodeAsync(ffmpeg, args, durationSeconds, progress, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (exit == 0)
+        {
+            return;
+        }
+
+        // QSV + soft filters often fails with auto_scale / ENOSYS on Synology sc-ffmpeg7.
+        // Retry once with software decode+encode (libx264/libx265).
+        if (action == EncodeAction.Full
+            && ResolveHardware(config) != HardwareAccelerationType.none
+            && LooksLikeHwFilterFailure(stderr))
+        {
+            _logger.LogWarning(
+                "StreamReady hardware encode failed (exit {Exit}); retrying with software encode. Tail: {Tail}",
+                exit,
+                Truncate(stderr, 500));
+            var softArgs = BuildArgs(inputPath, outputPath, action, config, videoRange, forceSoftware: true);
+            _logger.LogInformation("StreamReady ffmpeg (software fallback): {Bin} {Args}", ffmpeg, softArgs);
+            (exit, _, stderr) = await RunEncodeAsync(ffmpeg, softArgs, durationSeconds, progress, cancellationToken)
+                .ConfigureAwait(false);
+            if (exit == 0)
+            {
+                return;
+            }
+        }
+
+        throw new InvalidOperationException($"FFmpeg exited with code {exit}. {Truncate(stderr, 2000)}");
+    }
+
+    private async Task<(int ExitCode, string Stdout, string Stderr)> RunEncodeAsync(
+        string ffmpeg,
+        string args,
+        double durationSeconds,
+        IProgress<double> progress,
+        CancellationToken cancellationToken)
+    {
+        return await RunProcessAsync(
             ffmpeg,
             args,
             line =>
@@ -208,26 +247,71 @@ public class FfmpegRunner
             },
             null,
             cancellationToken).ConfigureAwait(false);
-
-        if (exit != 0)
-        {
-            var tail = stderr.Length > 2000 ? stderr[^2000..] : stderr;
-            throw new InvalidOperationException($"FFmpeg exited with code {exit}. {tail}");
-        }
     }
 
-    public string BuildArgs(string inputPath, string outputPath, EncodeAction action, PluginConfiguration config)
+    private static bool LooksLikeHwFilterFailure(string stderr)
+    {
+        if (string.IsNullOrEmpty(stderr))
+        {
+            return false;
+        }
+
+        return stderr.Contains("auto_scale", StringComparison.OrdinalIgnoreCase)
+            || stderr.Contains("Impossible to convert between the formats", StringComparison.OrdinalIgnoreCase)
+            || stderr.Contains("Function not implemented", StringComparison.OrdinalIgnoreCase)
+            || stderr.Contains("Could not open encoder", StringComparison.OrdinalIgnoreCase)
+            || stderr.Contains("Error reinitializing filters", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string Truncate(string value, int max)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= max)
+        {
+            return value ?? string.Empty;
+        }
+
+        return value[^max..];
+    }
+
+    public string BuildArgs(
+        string inputPath,
+        string outputPath,
+        EncodeAction action,
+        PluginConfiguration config,
+        string? videoRange = null,
+        bool forceSoftware = false)
     {
         var sb = new StringBuilder();
         sb.Append("-y -hide_banner -loglevel error -stats ");
 
-        var hw = action == EncodeAction.Full ? ResolveHardware(config) : HardwareAccelerationType.none;
-        var hwaccel = HwaccelMethod(hw);
-        // Decode on GPU when encoding on GPU. Omit -hwaccel_output_format so software filters
-        // (tone-map / scale) still work — same approach as jellyfin-plugin-pre-transcode.
-        if (!string.IsNullOrEmpty(hwaccel))
+        var hw = forceSoftware || action != EncodeAction.Full
+            ? HardwareAccelerationType.none
+            : ResolveHardware(config);
+        var vf = action == EncodeAction.Full ? BuildVideoFilter(config, videoRange) : string.Empty;
+        var hasSoftwareFilters = !string.IsNullOrEmpty(vf);
+
+        // Soft filters need system-memory frames. Keep -hwaccel only when encoding on GPU
+        // without a soft filter graph (QSV/VAAPI + zscale/tonemap is unreliable on Synology).
+        var (videoEncoder, extra) = action == EncodeAction.Full
+            ? ResolveVideoEncoder(EncodePlanner.DestinationVideoCodec(config), config, hasSoftwareFilters, forceSoftware)
+            : ("", "");
+
+        var usingHwEncode = !forceSoftware
+            && action == EncodeAction.Full
+            && videoEncoder.Contains('_')
+            && !videoEncoder.StartsWith("lib", StringComparison.OrdinalIgnoreCase);
+
+        // NVENC/VAAPI can use -hwaccel for decode. QSV + Synology sc-ffmpeg7 often breaks
+        // when -hwaccel qsv feeds soft format=nv12; prefer software decode → nv12 → h264_qsv.
+        if (usingHwEncode
+            && !hasSoftwareFilters
+            && !videoEncoder.Contains("qsv", StringComparison.OrdinalIgnoreCase))
         {
-            sb.Append("-hwaccel ").Append(hwaccel).Append(' ');
+            var hwaccel = HwaccelMethod(hw);
+            if (!string.IsNullOrEmpty(hwaccel))
+            {
+                sb.Append("-hwaccel ").Append(hwaccel).Append(' ');
+            }
         }
 
         sb.Append("-i ").Append(Quote(inputPath)).Append(' ');
@@ -240,12 +324,10 @@ public class FfmpegRunner
             sb.Append("-map 0:v:0 -map 0:a:0? ");
         }
 
-        var destCodec = EncodePlanner.DestinationVideoCodec(config);
         var channels = EncodePlanner.DestinationAudioChannels(config);
         var crf = EncodePlanner.DestinationCrf(config);
         var audioBitrate = channels <= 2 ? "192k" : "384k";
         var preset = string.IsNullOrWhiteSpace(config.FfmpegPreset) ? "medium" : config.FfmpegPreset;
-        var vf = action == EncodeAction.Full ? BuildVideoFilter(config) : string.Empty;
 
         switch (action)
         {
@@ -257,16 +339,27 @@ public class FfmpegRunner
                     .Append(" -ac ").Append(channels).Append(' ');
                 break;
             default:
-                // VAAPI encode + software tone-map is fragile; prefer QSV/NVENC or fall back to software.
-                var (videoEncoder, extra) = ResolveVideoEncoder(destCodec, config, !string.IsNullOrEmpty(vf));
-                if (!string.IsNullOrEmpty(vf))
+                if (hasSoftwareFilters)
                 {
                     if (videoEncoder.Contains("vaapi", StringComparison.OrdinalIgnoreCase))
                     {
                         vf += ",format=nv12,hwupload";
                     }
+                    else if (videoEncoder.Contains("qsv", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Soft filters produce yuv420p; QSV needs nv12 without a full hwupload graph.
+                        vf += ",format=nv12";
+                    }
 
                     sb.Append("-vf ").Append(Quote(vf)).Append(' ');
+                }
+                else if (videoEncoder.Contains("qsv", StringComparison.OrdinalIgnoreCase))
+                {
+                    sb.Append("-vf format=nv12 ");
+                }
+                else if (videoEncoder.Contains("vaapi", StringComparison.OrdinalIgnoreCase))
+                {
+                    sb.Append("-vf format=nv12,hwupload ");
                 }
 
                 sb.Append("-c:v ").Append(videoEncoder).Append(' ').Append(extra);
@@ -281,7 +374,7 @@ public class FfmpegRunner
                 }
                 else if (videoEncoder.Contains("qsv", StringComparison.OrdinalIgnoreCase))
                 {
-                    sb.Append("-global_quality ").Append(crf).Append(' ');
+                    sb.Append("-global_quality ").Append(crf).Append(" -pix_fmt nv12 ");
                 }
                 else if (videoEncoder.Contains("vaapi", StringComparison.OrdinalIgnoreCase))
                 {
@@ -313,11 +406,17 @@ public class FfmpegRunner
         return sb.ToString();
     }
 
-    private string BuildVideoFilter(PluginConfiguration config)
+    private string BuildVideoFilter(PluginConfiguration config, string? videoRange)
     {
         var filters = new List<string>();
-        if (config.ToneMapHdr)
+        // Only tone-map when the source is actually HDR (Pre-Transcode pattern).
+        if (config.ToneMapHdr && IsHdrRange(videoRange))
         {
+            filters.Add("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p");
+        }
+        else if (config.ToneMapHdr && string.IsNullOrWhiteSpace(videoRange))
+        {
+            // Unknown range + tone-map enabled: keep previous behavior for safety on HDR files.
             filters.Add("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p");
         }
 
@@ -329,16 +428,43 @@ public class FfmpegRunner
         return string.Join(',', filters);
     }
 
-    private (string Encoder, string Extra) ResolveVideoEncoder(string destCodec, PluginConfiguration config, bool hasSoftwareFilters)
+    private static bool IsHdrRange(string? videoRange)
     {
-        var hw = ResolveHardware(config);
+        if (string.IsNullOrWhiteSpace(videoRange))
+        {
+            return false;
+        }
+
+        return videoRange.Contains("HDR", StringComparison.OrdinalIgnoreCase)
+            || videoRange.Contains("DOVI", StringComparison.OrdinalIgnoreCase)
+            || videoRange.Contains("Dolby", StringComparison.OrdinalIgnoreCase)
+            || videoRange.Contains("HLG", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private (string Encoder, string Extra) ResolveVideoEncoder(
+        string destCodec,
+        PluginConfiguration config,
+        bool hasSoftwareFilters,
+        bool forceSoftware)
+    {
         var hevc = destCodec.Equals("hevc", StringComparison.OrdinalIgnoreCase);
         var extra = string.Empty;
 
-        // Soft filters + VAAPI encode often fails; fall back to software encode (decode can still be HW).
-        if (hw == HardwareAccelerationType.vaapi && hasSoftwareFilters)
+        if (forceSoftware)
         {
-            _logger.LogInformation("StreamReady using software encode because VAAPI + tone-map/scale filters are unreliable together");
+            return (hevc ? "libx265" : "libx264", extra);
+        }
+
+        var hw = ResolveHardware(config);
+
+        // Soft filters (zscale/tonemap/scale) + QSV/VAAPI encode fail with auto_scale/ENOSYS
+        // on many Intel/Synology builds. Prefer CPU encode; optional one-shot HW retry still exists.
+        if (hasSoftwareFilters
+            && (hw == HardwareAccelerationType.vaapi || hw == HardwareAccelerationType.qsv))
+        {
+            _logger.LogInformation(
+                "StreamReady using software encode because {Hw} + tone-map/scale filters are unreliable together",
+                hw);
             return (hevc ? "libx265" : "libx264", extra);
         }
 

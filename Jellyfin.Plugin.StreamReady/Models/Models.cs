@@ -90,6 +90,8 @@ public class EncodeJob
     public DateTime? FinishedAt { get; set; }
 
     public List<string> Reasons { get; set; } = [];
+
+    public string VideoRange { get; set; } = string.Empty;
 }
 
 public class ProcessedMarker
