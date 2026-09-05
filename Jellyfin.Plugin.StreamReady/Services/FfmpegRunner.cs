@@ -545,13 +545,26 @@ public class FfmpegRunner
         sb.Append("-i ").Append(Quote(inputPath)).Append(' ');
         var keepAll = config.KeepAllAudioAndSubtitles;
         var destContainer = EncodePlanner.DestinationContainer(config);
+        // MP4 cannot reliably hold PGS/VobSub; mapping all subs + mov_text → ffmpeg exit 234.
+        var mapSubs = keepAll && destContainer == "mkv";
         if (action == EncodeAction.Remux)
         {
-            sb.Append("-map 0 ");
+            if (destContainer == "mp4")
+            {
+                sb.Append("-map 0:v:0 -map 0:a? -sn ");
+            }
+            else
+            {
+                sb.Append("-map 0 ");
+            }
         }
         else if (keepAll)
         {
-            sb.Append("-map 0:v:0 -map 0:a? -map 0:s? ");
+            sb.Append("-map 0:v:0 -map 0:a? ");
+            if (mapSubs)
+            {
+                sb.Append("-map 0:s? ");
+            }
         }
         else
         {
@@ -572,9 +585,9 @@ public class FfmpegRunner
             case EncodeAction.AudioOnly:
                 sb.Append("-c:v copy -c:a aac -b:a ").Append(audioBitrate)
                     .Append(" -ac ").Append(channels).Append(' ');
-                if (keepAll)
+                if (mapSubs)
                 {
-                    sb.Append(destContainer == "mkv" ? "-c:s copy " : "-c:s mov_text ");
+                    sb.Append("-c:s copy ");
                 }
 
                 break;
@@ -632,9 +645,9 @@ public class FfmpegRunner
 
                 sb.Append("-c:a aac -b:a ").Append(audioBitrate)
                     .Append(" -ac ").Append(channels).Append(' ');
-                if (keepAll)
+                if (mapSubs)
                 {
-                    sb.Append(destContainer == "mkv" ? "-c:s copy " : "-c:s mov_text ");
+                    sb.Append("-c:s copy ");
                 }
 
                 break;
@@ -643,18 +656,7 @@ public class FfmpegRunner
         if (destContainer == "mp4"
             || Path.GetExtension(outputPath).Equals(".mp4", StringComparison.OrdinalIgnoreCase))
         {
-            if (action == EncodeAction.Remux)
-            {
-                sb.Append("-c:s mov_text -movflags +faststart ");
-            }
-            else if (!keepAll)
-            {
-                sb.Append("-sn -movflags +faststart ");
-            }
-            else
-            {
-                sb.Append("-movflags +faststart ");
-            }
+            sb.Append("-movflags +faststart ");
         }
         else if (destContainer == "mkv")
         {
@@ -663,8 +665,10 @@ public class FfmpegRunner
 
         sb.Append(Quote(outputPath));
 
-        var hardwareLabel = forceSoftware || videoEncoder.StartsWith("lib", StringComparison.OrdinalIgnoreCase)
-            ? "Software (CPU)"
+        // AudioOnly/Remux only copy video — don't label the plan as QSV just because the NAS has it.
+        var hardwareLabel = action != EncodeAction.Full || forceSoftware
+            || videoEncoder.StartsWith("lib", StringComparison.OrdinalIgnoreCase)
+            ? (action == EncodeAction.Full ? "Software (CPU)" : "copy")
             : DescribeHardware(config);
 
         var summaryParts = new List<string>
@@ -676,7 +680,7 @@ public class FfmpegRunner
         };
         if (keepAll)
         {
-            summaryParts.Add("all audio/subs");
+            summaryParts.Add(mapSubs ? "all audio/subs" : "all audio · subs skipped (mp4)");
         }
 
         if (forceSoftware)

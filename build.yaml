@@ -1,7 +1,7 @@
 ---
 name: "StreamReady"
 guid: "9d2e8c4a-1f6b-4a73-b8e0-5c9f3a7d2e11"
-version: "1.2.0.0"
+version: "1.2.1.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "ThuGie"
@@ -17,6 +17,5 @@ category: "General"
 artifacts:
   - "Jellyfin.Plugin.StreamReady.dll"
 changelog: >
-  1.2.0: Encode time windows; restore from backup / remove sidecar; richer verify
-  (video stream + dimensions + duration); Needs Encoding search/sort; alternate-version
-  policy cards and replacement history. Silent (no notifications).
+  1.2.1: Fix MP4 encode exit 234 when mapping PGS/bitmap subs; skip subs on MP4
+  (use MKV to keep them). Keep FFmpeg log open across queue refresh. Clarify AudioOnly plan label.
