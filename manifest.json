@@ -1,1 +1,21 @@
-[]
+[
+  {
+    "guid": "9d2e8c4a-1f6b-4a73-b8e0-5c9f3a7d2e11",
+    "name": "StreamReady",
+    "description": "Pre-encode oversized or incompatible movies and episodes so clients can Direct Play. Manual review list or Auto Direct Pre-Transcode.",
+    "overview": "Pre-encode oversized or incompatible movies and episodes so clients can Direct Play.",
+    "owner": "ThuGie",
+    "category": "General",
+    "imageUrl": "",
+    "versions": [
+      {
+        "version": "1.0.0.0",
+        "changelog": "Initial release: manual Needs Encoding list, Auto Direct Pre-Transcode, smart remux/audio/full encode, Enhanced-style settings.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/ThuGie/jellyfin-plugin-streamready/releases/download/v1.0.0.0/jellyfin-plugin-streamready_1.0.0.0.zip",
+        "checksum": "3868813572f66346134dabacf77f8e21",
+        "timestamp": "2026-09-05T15:15:00Z"
+      }
+    ]
+  }
+]
