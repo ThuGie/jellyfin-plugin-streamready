@@ -2388,6 +2388,17 @@ div#bazarrMappingsValidationResult {
     gap: 8px;
 }
 
+.sr-check-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 4px 10px;
+    margin: 6px 0 4px;
+}
+
+.sr-check-grid > .checkboxContainer {
+    margin: 0;
+}
+
 .sr-docs p { line-height: 1.55; }
 .sr-docs code {
     background: var(--sr-surface-2);
