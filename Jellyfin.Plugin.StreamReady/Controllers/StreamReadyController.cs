@@ -7,7 +7,6 @@ using Microsoft.AspNetCore.Mvc;
 namespace Jellyfin.Plugin.StreamReady.Controllers;
 
 [ApiController]
-[Authorize]
 [Route("StreamReady")]
 public class StreamReadyController : ControllerBase
 {
@@ -32,27 +31,24 @@ public class StreamReadyController : ControllerBase
     }
 
     [HttpGet("Configuration/configPage.css")]
-    [HttpGet("Configuration/stylesheet")]
-    [AllowAnonymous]
-    public ActionResult GetCss()
+    public ActionResult GetConfigPageStylesheet()
     {
-        var resource = typeof(Plugin).Namespace + ".Configuration.configPage.css";
-        var stream = typeof(Plugin).Assembly.GetManifestResourceStream(resource);
+        var stream = typeof(Plugin).Assembly.GetManifestResourceStream(
+            typeof(Plugin).Namespace + ".Configuration.configPage.css");
         if (stream is null)
         {
             return NotFound();
         }
 
-        Response.Headers.CacheControl = "no-cache";
-        return File(stream, "text/css; charset=utf-8");
+        Response.Headers.CacheControl = "no-store";
+        return new FileStreamResult(stream, "text/css");
     }
 
     [HttpGet("thumb.png")]
-    [AllowAnonymous]
     public ActionResult GetThumb()
     {
-        var resource = typeof(Plugin).Namespace + ".thumb.png";
-        var stream = typeof(Plugin).Assembly.GetManifestResourceStream(resource);
+        var stream = typeof(Plugin).Assembly.GetManifestResourceStream(
+            typeof(Plugin).Namespace + ".thumb.png");
         if (stream is null)
         {
             return NotFound();
@@ -61,6 +57,7 @@ public class StreamReadyController : ControllerBase
         return File(stream, "image/png");
     }
 
+    [Authorize]
     [HttpGet("status")]
     public ActionResult<object> GetStatus()
     {
@@ -94,6 +91,7 @@ public class StreamReadyController : ControllerBase
         };
     }
 
+    [Authorize]
     [HttpGet("libraries")]
     public ActionResult<object> GetLibraries()
     {
@@ -108,6 +106,7 @@ public class StreamReadyController : ControllerBase
         return folders;
     }
 
+    [Authorize]
     [HttpPost("scan")]
     public async Task<ActionResult<object>> Scan(CancellationToken cancellationToken)
     {
@@ -115,6 +114,7 @@ public class StreamReadyController : ControllerBase
         return new { found = count };
     }
 
+    [Authorize]
     [HttpGet("candidates")]
     public ActionResult<object> GetCandidates([FromQuery] string? reason, [FromQuery] string? itemType)
     {
@@ -132,6 +132,7 @@ public class StreamReadyController : ControllerBase
         return list.Select(MapCandidate).ToList();
     }
 
+    [Authorize]
     [HttpPost("candidates/{id}/encode")]
     public ActionResult<object> EncodeOne(string id)
     {
@@ -146,6 +147,7 @@ public class StreamReadyController : ControllerBase
         return MapJob(job);
     }
 
+    [Authorize]
     [HttpPost("candidates/encode")]
     public ActionResult<object> EncodeMany([FromBody] IdListRequest request)
     {
@@ -160,6 +162,7 @@ public class StreamReadyController : ControllerBase
         return new { queued = jobs.Count };
     }
 
+    [Authorize]
     [HttpPost("candidates/{id}/ignore")]
     public ActionResult Ignore(string id)
     {
@@ -167,12 +170,14 @@ public class StreamReadyController : ControllerBase
         return Ok();
     }
 
+    [Authorize]
     [HttpGet("queue")]
     public ActionResult<object> GetQueue()
     {
         return _store.GetQueue().Select(MapJob).ToList();
     }
 
+    [Authorize]
     [HttpPost("queue/{id}/cancel")]
     public ActionResult Cancel(string id)
     {
@@ -185,6 +190,7 @@ public class StreamReadyController : ControllerBase
         return Ok();
     }
 
+    [Authorize]
     [HttpPost("queue/{id}/retry")]
     public ActionResult Retry(string id)
     {
@@ -193,6 +199,7 @@ public class StreamReadyController : ControllerBase
         return Ok();
     }
 
+    [Authorize]
     [HttpPost("queue/{id}/skip")]
     public ActionResult Skip(string id)
     {
@@ -200,6 +207,7 @@ public class StreamReadyController : ControllerBase
         return Ok();
     }
 
+    [Authorize]
     [HttpPost("worker/pause")]
     public ActionResult Pause()
     {
@@ -207,6 +215,7 @@ public class StreamReadyController : ControllerBase
         return Ok();
     }
 
+    [Authorize]
     [HttpPost("worker/resume")]
     public ActionResult Resume()
     {
