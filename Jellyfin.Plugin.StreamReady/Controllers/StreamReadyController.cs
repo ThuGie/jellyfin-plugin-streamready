@@ -71,13 +71,15 @@ public class StreamReadyController : ControllerBase
         var ffmpegVersion = _ffmpeg.EncoderVersion;
         var ffmpegReady = _ffmpeg.IsReady;
         var hwLabel = _ffmpeg.DescribeHardware(config);
-        _logger.LogDebug(
-            "StreamReady status: ready={Ready} path={Path} version={Version} hw={Hw} candidates={Count}",
+        var candidateCount = _store.GetCandidates().Count;
+        _logger.LogInformation(
+            "StreamReady status: ready={Ready} path={Path} version={Version} hw={Hw} candidates={Count} lastFound={LastFound}",
             ffmpegReady,
             ffmpegPath,
             ffmpegVersion,
             hwLabel,
-            _store.GetCandidates().Count);
+            candidateCount,
+            _scanner.LastFound);
         return new
         {
             enabled = config?.Enabled ?? false,
@@ -91,7 +93,7 @@ public class StreamReadyController : ControllerBase
             ffmpegVersion,
             ffmpegReady,
             hardwareAccel = hwLabel,
-            candidateCount = _store.GetCandidates().Count,
+            candidateCount,
             queuedCount = _store.QueuedCount(),
             runningCount = _store.RunningCount(),
             currentJob = current is null
@@ -105,6 +107,16 @@ public class StreamReadyController : ControllerBase
                     action = current.Action.ToString()
                 }
         };
+    }
+
+    /// <summary>
+    /// Pre-Transcode-style capabilities (PascalCase) for UI debugging / readiness.
+    /// </summary>
+    [Authorize]
+    [HttpGet("Capabilities")]
+    public ActionResult<object> GetCapabilities()
+    {
+        return _ffmpeg.GetCapabilitiesSnapshot(Plugin.Instance?.Configuration);
     }
 
     [Authorize]
@@ -163,6 +175,14 @@ public class StreamReadyController : ControllerBase
             .OrderByDescending(c => c.SizeBytes)
             .ToList();
         var page = filtered.Skip(skip).Take(limit).Select(MapCandidate).ToList();
+        _logger.LogInformation(
+            "StreamReady candidates: total={Total} skip={Skip} limit={Limit} returned={Returned} reason={Reason} itemType={ItemType}",
+            filtered.Count,
+            skip,
+            limit,
+            page.Count,
+            reason ?? "",
+            itemType ?? "");
         return new
         {
             total = filtered.Count,

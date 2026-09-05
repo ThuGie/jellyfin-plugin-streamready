@@ -340,17 +340,32 @@
                 return page ? page.querySelector('#' + id) : null;
             }
 
+            // Match Pre-Transcode: force JSON parse. Without dataType:'json', ApiClient.ajax can
+            // resolve to a raw string — then pick()/payload.items fail and the UI shows Not found / 0.
+            function parseJsonPayload(data) {
+                if (data == null) return data;
+                if (typeof data === 'string') {
+                    try {
+                        return JSON.parse(data);
+                    } catch (e) {
+                        return data;
+                    }
+                }
+                return data;
+            }
+
             function api(path, method, body) {
                 var opts = {
                     type: method || 'GET',
                     url: ApiClient.getUrl('/StreamReady' + path),
+                    dataType: 'json',
                     headers: { 'Accept': 'application/json' }
                 };
                 if (body) {
                     opts.data = JSON.stringify(body);
                     opts.contentType = 'application/json';
                 }
-                return ApiClient.ajax(opts);
+                return ApiClient.ajax(opts).then(parseJsonPayload);
             }
 
             function detectTheme() {
@@ -572,11 +587,16 @@
                 api('/status').then(function (s) {
                     var grid = val('srStatusGrid');
                     if (!grid) return;
+                    if (!s || typeof s !== 'object') {
+                        grid.innerHTML = card('warn', 'error', 'Status', 'Unexpected response from /StreamReady/status', null);
+                        return;
+                    }
                     var ready = !!pick(s, 'ffmpegReady');
                     var path = pick(s, 'ffmpegPath') || '';
                     var version = pick(s, 'ffmpegVersion') || '';
                     var hw = pick(s, 'hardwareAccel') || 'Software (CPU)';
-                    var candidateCount = pick(s, 'candidateCount') || 0;
+                    var candidateCount = pick(s, 'candidateCount');
+                    if (candidateCount == null) candidateCount = pick(s, 'lastFound') || 0;
                     var queuedCount = pick(s, 'queuedCount') || 0;
                     var runningCount = pick(s, 'runningCount') || 0;
                     var paused = !!pick(s, 'paused');
@@ -596,7 +616,13 @@
                         card(paused ? 'warn' : 'ok', paused ? 'pause' : 'play_arrow', 'Worker', workerDetail, 'queue')
                     ];
                     grid.innerHTML = cards.join('');
-                }).catch(function () {});
+                }).catch(function (err) {
+                    var grid = val('srStatusGrid');
+                    if (grid) {
+                        grid.innerHTML = card('warn', 'error', 'Status', 'Failed to load /StreamReady/status — check Jellyfin logs', null);
+                    }
+                    console.warn('StreamReady status failed', err);
+                });
             }
 
             function card(state, icon, name, detail, tab) {
@@ -615,18 +641,21 @@
                 api('/candidates?' + q.join('&')).then(function (payload) {
                     var rows = [];
                     var total = 0;
+                    payload = parseJsonPayload(payload);
                     if (Array.isArray(payload)) {
                         rows = payload;
                         total = payload.length;
-                    } else if (payload) {
+                    } else if (payload && typeof payload === 'object') {
                         rows = payload.items || payload.Items || [];
-                        total = payload.total || payload.Total || rows.length;
+                        total = payload.total != null ? payload.total : (payload.Total != null ? payload.Total : rows.length);
                     }
+                    if (!Array.isArray(rows)) rows = [];
                     visibleCandidates = rows;
                     renderCandidates(visibleCandidates, total);
-                }).catch(function () {
+                }).catch(function (err) {
+                    console.warn('StreamReady candidates failed', err);
                     var host = val('srCandidates');
-                    if (host) host.innerHTML = '<div class="sr-empty">Could not load candidates.</div>';
+                    if (host) host.innerHTML = '<div class="sr-empty">Could not load candidates. Open DevTools → Network and check /StreamReady/candidates.</div>';
                 });
             }
 
@@ -709,14 +738,17 @@
                 api('/scan', 'POST').then(function (r) {
                     scanning = false;
                     Dashboard.hideLoadingMsg();
-                    Dashboard.alert('Scan complete. ' + (r.found || 0) + ' file(s) need encoding.');
+                    var found = pick(r, 'found');
+                    if (found == null) found = 0;
+                    Dashboard.alert('Scan complete. ' + found + ' file(s) need encoding.');
                     refreshStatus();
                     showTab('needs');
                     loadCandidates();
-                }).catch(function () {
+                }).catch(function (err) {
                     scanning = false;
                     Dashboard.hideLoadingMsg();
-                    Dashboard.alert('Scan failed. Save at least one library first.');
+                    console.warn('StreamReady scan failed', err);
+                    Dashboard.alert('Scan failed. Save at least one library first, then try again.');
                 });
             }
 

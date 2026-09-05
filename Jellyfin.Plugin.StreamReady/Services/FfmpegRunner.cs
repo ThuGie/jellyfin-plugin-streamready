@@ -474,18 +474,28 @@ public class FfmpegRunner
     {
         try
         {
+            // Synology/sc-ffmpeg7 often lists hwaccel (qsv/vaapi) even when SupportsEncoder is flaky —
+            // treat either as usable, same as DetectBestHardware.
             return hw switch
             {
                 HardwareAccelerationType.qsv =>
-                    _mediaEncoder.SupportsEncoder("h264_qsv") || _mediaEncoder.SupportsEncoder("hevc_qsv"),
+                    _mediaEncoder.SupportsHwaccel("qsv")
+                    || _mediaEncoder.SupportsEncoder("h264_qsv")
+                    || _mediaEncoder.SupportsEncoder("hevc_qsv"),
                 HardwareAccelerationType.nvenc =>
-                    _mediaEncoder.SupportsEncoder("h264_nvenc") || _mediaEncoder.SupportsEncoder("hevc_nvenc"),
+                    _mediaEncoder.SupportsHwaccel("cuda")
+                    || _mediaEncoder.SupportsEncoder("h264_nvenc")
+                    || _mediaEncoder.SupportsEncoder("hevc_nvenc"),
                 HardwareAccelerationType.vaapi =>
-                    _mediaEncoder.SupportsEncoder("h264_vaapi") || _mediaEncoder.SupportsEncoder("hevc_vaapi"),
+                    _mediaEncoder.SupportsHwaccel("vaapi")
+                    || _mediaEncoder.SupportsEncoder("h264_vaapi")
+                    || _mediaEncoder.SupportsEncoder("hevc_vaapi"),
                 HardwareAccelerationType.amf =>
                     _mediaEncoder.SupportsEncoder("h264_amf") || _mediaEncoder.SupportsEncoder("hevc_amf"),
                 HardwareAccelerationType.videotoolbox =>
-                    _mediaEncoder.SupportsEncoder("h264_videotoolbox") || _mediaEncoder.SupportsEncoder("hevc_videotoolbox"),
+                    _mediaEncoder.SupportsHwaccel("videotoolbox")
+                    || _mediaEncoder.SupportsEncoder("h264_videotoolbox")
+                    || _mediaEncoder.SupportsEncoder("hevc_videotoolbox"),
                 _ => false
             };
         }
@@ -493,6 +503,37 @@ public class FfmpegRunner
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// Pre-Transcode-style snapshot for the UI: path + version + hwaccel names Jellyfin already knows.
+    /// </summary>
+    public object GetCapabilitiesSnapshot(PluginConfiguration? config)
+    {
+        var hwaccels = new List<string>();
+        try
+        {
+            foreach (var name in new[] { "qsv", "vaapi", "cuda", "nvenc", "opencl", "vulkan", "d3d11va", "videotoolbox", "drm" })
+            {
+                if (_mediaEncoder.SupportsHwaccel(name))
+                {
+                    hwaccels.Add(name);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "StreamReady hwaccel enumeration failed");
+        }
+
+        return new
+        {
+            FfmpegPath = EncoderPath,
+            FfmpegVersion = EncoderVersion ?? string.Empty,
+            FfmpegReady = IsReady,
+            HardwareAccel = DescribeHardware(config),
+            HardwareAccelerators = hwaccels
+        };
     }
 
     private async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
