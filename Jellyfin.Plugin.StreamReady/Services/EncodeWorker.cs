@@ -191,7 +191,15 @@ public class EncodeWorker : BackgroundService
                 }
             });
 
-            await _ffmpeg.EncodeAsync(sourcePath, tempPath, job.Action, config, duration, progress, jobCts.Token)
+            await _ffmpeg.EncodeAsync(
+                    sourcePath,
+                    tempPath,
+                    job.Action,
+                    config,
+                    duration,
+                    progress,
+                    jobCts.Token,
+                    job.VideoRange)
                 .ConfigureAwait(false);
 
             if (_store.IsCancelled(job.Id) || jobCts.IsCancellationRequested)

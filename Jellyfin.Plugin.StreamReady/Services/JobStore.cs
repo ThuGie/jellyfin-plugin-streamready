@@ -141,6 +141,7 @@ public class JobStore
                 Action = candidate.PlannedAction,
                 Status = JobStatus.Queued,
                 Reasons = [.. candidate.Reasons],
+                VideoRange = candidate.VideoRange,
                 QueuedAt = DateTime.UtcNow
             };
             _state.Queue.Insert(0, job);
@@ -172,6 +173,7 @@ public class JobStore
                     Action = candidate.PlannedAction,
                     Status = JobStatus.Queued,
                     Reasons = [.. candidate.Reasons],
+                    VideoRange = candidate.VideoRange,
                     QueuedAt = DateTime.UtcNow
                 };
                 _state.Queue.Insert(0, job);
@@ -470,7 +472,8 @@ public class JobStore
             QueuedAt = source.QueuedAt,
             StartedAt = source.StartedAt,
             FinishedAt = source.FinishedAt,
-            Reasons = [.. source.Reasons]
+            Reasons = [.. source.Reasons],
+            VideoRange = source.VideoRange
         };
     }
 }
