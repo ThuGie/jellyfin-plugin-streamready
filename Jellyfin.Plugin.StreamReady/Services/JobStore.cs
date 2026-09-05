@@ -239,7 +239,12 @@ public class JobStore
         }
     }
 
-    public void UpdateProgress(string id, double progress, string? speed = null, bool allowDecrease = false)
+    public void UpdateProgress(
+        string id,
+        double progress,
+        string? speed = null,
+        string? eta = null,
+        bool allowDecrease = false)
     {
         lock (_gate)
         {
@@ -258,6 +263,11 @@ public class JobStore
                     job.Speed = speed;
                 }
 
+                if (eta is not null)
+                {
+                    job.Eta = eta;
+                }
+
                 return;
             }
 
@@ -265,6 +275,15 @@ public class JobStore
             if (speed is not null)
             {
                 job.Speed = speed;
+            }
+
+            if (eta is not null)
+            {
+                job.Eta = eta;
+            }
+            else if (next <= 1 || next >= 100)
+            {
+                job.Eta = null;
             }
         }
     }
@@ -528,7 +547,8 @@ public class JobStore
             HardwarePath = source.HardwarePath,
             ToneMap = source.ToneMap,
             Filters = source.Filters,
-            Speed = source.Speed
+            Speed = source.Speed,
+            Eta = source.Eta
         };
     }
 }

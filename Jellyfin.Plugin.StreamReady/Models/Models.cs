@@ -105,6 +105,18 @@ public class EncodeJob
     public string Filters { get; set; } = string.Empty;
 
     public string? Speed { get; set; }
+
+    /// <summary>Human ETA like "~12m left".</summary>
+    public string? Eta { get; set; }
+}
+
+public class EncodeProgressUpdate
+{
+    public double Percent { get; set; }
+
+    public string? Speed { get; set; }
+
+    public string? Eta { get; set; }
 }
 
 public class EncodePlan

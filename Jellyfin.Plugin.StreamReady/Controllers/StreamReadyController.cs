@@ -111,7 +111,8 @@ public class StreamReadyController : ControllerBase
                     toneMap = current.ToneMap,
                     filters = current.Filters,
                     videoRange = current.VideoRange,
-                    speed = current.Speed
+                    speed = current.Speed,
+                    eta = current.Eta
                 }
         };
     }
@@ -341,7 +342,8 @@ public class StreamReadyController : ControllerBase
             toneMap = j.ToneMap,
             filters = j.Filters,
             videoRange = j.VideoRange,
-            speed = j.Speed
+            speed = j.Speed,
+            eta = j.Eta
         };
     }
 

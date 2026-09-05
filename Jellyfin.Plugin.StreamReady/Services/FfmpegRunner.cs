@@ -177,7 +177,7 @@ public class FfmpegRunner
         EncodeAction action,
         PluginConfiguration config,
         double durationSeconds,
-        IProgress<double> progress,
+        IProgress<EncodeProgressUpdate> progress,
         CancellationToken cancellationToken,
         string? videoRange = null,
         Action<EncodePlan>? onPlan = null)
@@ -198,13 +198,13 @@ public class FfmpegRunner
             string.IsNullOrEmpty(plan.Filters) ? "(none)" : plan.Filters);
         _logger.LogInformation("StreamReady ffmpeg: {Bin} {Args}", ffmpeg, plan.Args);
 
-        progress.Report(0.5);
+        ReportProgress(progress, 0.5, null, null);
         var (exit, _, stderr) = await RunEncodeAsync(ffmpeg, plan.Args, durationSeconds, progress, cancellationToken)
             .ConfigureAwait(false);
 
         if (exit == 0)
         {
-            progress.Report(100);
+            ReportProgress(progress, 100, null, "done");
             return;
         }
 
@@ -221,12 +221,12 @@ public class FfmpegRunner
             plan = BuildEncodePlan(inputPath, outputPath, action, config, videoRange, forceSoftware: true);
             onPlan?.Invoke(plan);
             _logger.LogInformation("StreamReady ffmpeg (software fallback): {Bin} {Args}", ffmpeg, plan.Args);
-            progress.Report(0.5);
+            ReportProgress(progress, 0.5, null, "retrying…");
             (exit, _, stderr) = await RunEncodeAsync(ffmpeg, plan.Args, durationSeconds, progress, cancellationToken)
                 .ConfigureAwait(false);
             if (exit == 0)
             {
-                progress.Report(100);
+                ReportProgress(progress, 100, null, "done");
                 return;
             }
         }
@@ -234,18 +234,33 @@ public class FfmpegRunner
         throw new InvalidOperationException($"FFmpeg exited with code {exit}. {Truncate(stderr, 2000)}");
     }
 
+    private static void ReportProgress(
+        IProgress<EncodeProgressUpdate> progress,
+        double percent,
+        string? speed,
+        string? eta)
+    {
+        progress.Report(new EncodeProgressUpdate
+        {
+            Percent = percent,
+            Speed = speed,
+            Eta = eta
+        });
+    }
+
     private async Task<(int ExitCode, string Stdout, string Stderr)> RunEncodeAsync(
         string ffmpeg,
         string args,
         double durationSeconds,
-        IProgress<double> progress,
+        IProgress<EncodeProgressUpdate> progress,
         CancellationToken cancellationToken)
     {
+        var tracker = new ProgressTracker(durationSeconds);
         void HandleLine(string line)
         {
-            if (TryParseProgress(line, durationSeconds, out var pct))
+            if (tracker.TryHandle(line, out var update))
             {
-                progress.Report(pct);
+                progress.Report(update);
             }
         }
 
@@ -257,72 +272,140 @@ public class FfmpegRunner
             cancellationToken).ConfigureAwait(false);
     }
 
-    private static bool TryParseProgress(string line, double durationSeconds, out double percent)
+    private sealed class ProgressTracker
     {
-        percent = 0;
-        if (string.IsNullOrWhiteSpace(line) || durationSeconds <= 0)
+        private readonly double _durationSeconds;
+        private readonly DateTime _startedUtc = DateTime.UtcNow;
+        private double _lastEncodedSeconds;
+        private double _speedFactor;
+        private string? _speedLabel;
+
+        public ProgressTracker(double durationSeconds)
         {
-            return false;
+            _durationSeconds = durationSeconds;
         }
 
-        // Prefer unambiguous clock time from -progress.
-        if (line.StartsWith("out_time=", StringComparison.OrdinalIgnoreCase))
+        public bool TryHandle(string line, out EncodeProgressUpdate update)
         {
-            var raw = line["out_time=".Length..].Trim();
-            if (raw is "N/A" or "")
+            update = new EncodeProgressUpdate();
+            if (string.IsNullOrWhiteSpace(line) || _durationSeconds <= 0)
             {
                 return false;
             }
 
-            if (TimeSpan.TryParse(raw, CultureInfo.InvariantCulture, out var ts))
+            if (line.StartsWith("speed=", StringComparison.OrdinalIgnoreCase))
             {
-                percent = Math.Clamp(ts.TotalSeconds / durationSeconds * 100d, 0, 99.5);
-                return true;
+                var raw = line["speed=".Length..].Trim().TrimEnd('x', 'X');
+                if (double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var speed) && speed > 0)
+                {
+                    _speedFactor = speed;
+                    _speedLabel = speed.ToString("0.00", CultureInfo.InvariantCulture) + "x";
+                }
+
+                return false;
             }
 
-            return false;
-        }
+            double? encodedSeconds = null;
 
-        // out_time_us is microseconds (correct name).
-        if (line.StartsWith("out_time_us=", StringComparison.OrdinalIgnoreCase))
-        {
-            var raw = line["out_time_us=".Length..].Trim();
-            if (long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var us) && us >= 0)
+            if (line.StartsWith("out_time=", StringComparison.OrdinalIgnoreCase))
             {
-                percent = Math.Clamp(us / 1_000_000d / durationSeconds * 100d, 0, 99.5);
-                return true;
+                var raw = line["out_time=".Length..].Trim();
+                if (raw is not ("N/A" or "") && TimeSpan.TryParse(raw, CultureInfo.InvariantCulture, out var ts))
+                {
+                    encodedSeconds = ts.TotalSeconds;
+                }
+            }
+            else if (line.StartsWith("out_time_us=", StringComparison.OrdinalIgnoreCase))
+            {
+                var raw = line["out_time_us=".Length..].Trim();
+                if (long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var us) && us >= 0)
+                {
+                    encodedSeconds = us / 1_000_000d;
+                }
+            }
+            else if (line.StartsWith("out_time_ms=", StringComparison.OrdinalIgnoreCase))
+            {
+                // Misnamed: ffmpeg reports microseconds here.
+                var raw = line["out_time_ms=".Length..].Trim();
+                if (long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var misnamedUs) && misnamedUs >= 0)
+                {
+                    encodedSeconds = misnamedUs / 1_000_000d;
+                }
+            }
+            else
+            {
+                var match = TimeRegex.Match(line);
+                if (match.Success)
+                {
+                    var hours = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+                    var minutes = int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
+                    var seconds = double.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture);
+                    encodedSeconds = (hours * 3600) + (minutes * 60) + seconds;
+                }
             }
 
-            return false;
-        }
-
-        // out_time_ms is MISNAMED in ffmpeg: the value is microseconds, not milliseconds.
-        // Treating it as ms makes a few seconds of encode look like ~100%.
-        if (line.StartsWith("out_time_ms=", StringComparison.OrdinalIgnoreCase))
-        {
-            var raw = line["out_time_ms=".Length..].Trim();
-            if (long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var misnamedUs) && misnamedUs >= 0)
+            if (encodedSeconds is null)
             {
-                percent = Math.Clamp(misnamedUs / 1_000_000d / durationSeconds * 100d, 0, 99.5);
-                return true;
+                return false;
             }
 
-            return false;
+            _lastEncodedSeconds = encodedSeconds.Value;
+            var percent = Math.Clamp(_lastEncodedSeconds / _durationSeconds * 100d, 0, 99.5);
+            update.Percent = percent;
+            update.Speed = _speedLabel;
+            update.Eta = FormatEta(_durationSeconds, _lastEncodedSeconds, _speedFactor, _startedUtc);
+            return true;
         }
 
-        // Fallback: classic stats line time=HH:MM:SS.xx
-        var match = TimeRegex.Match(line);
-        if (!match.Success)
+        private static string? FormatEta(
+            double durationSeconds,
+            double encodedSeconds,
+            double speedFactor,
+            DateTime startedUtc)
         {
-            return false;
-        }
+            var remainingMedia = Math.Max(0, durationSeconds - encodedSeconds);
+            double? etaSeconds = null;
 
-        var hours = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
-        var minutes = int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
-        var seconds = double.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture);
-        var current = (hours * 3600) + (minutes * 60) + seconds;
-        percent = Math.Clamp(current / durationSeconds * 100d, 0, 99.5);
-        return true;
+            if (speedFactor > 0.05)
+            {
+                etaSeconds = remainingMedia / speedFactor;
+            }
+            else if (encodedSeconds > 2)
+            {
+                // Wall-clock fallback when ffmpeg speed is missing/N/A.
+                var wall = (DateTime.UtcNow - startedUtc).TotalSeconds;
+                if (wall > 1 && encodedSeconds > 0)
+                {
+                    var effective = encodedSeconds / wall;
+                    if (effective > 0.05)
+                    {
+                        etaSeconds = remainingMedia / effective;
+                    }
+                }
+            }
+
+            if (etaSeconds is null || double.IsNaN(etaSeconds.Value) || double.IsInfinity(etaSeconds.Value))
+            {
+                return null;
+            }
+
+            var sec = (int)Math.Ceiling(Math.Max(0, etaSeconds.Value));
+            if (sec < 60)
+            {
+                return $"~{sec}s left";
+            }
+
+            if (sec < 3600)
+            {
+                var m = sec / 60;
+                var s = sec % 60;
+                return s > 0 ? $"~{m}m {s}s left" : $"~{m}m left";
+            }
+
+            var h = sec / 3600;
+            var rm = (sec % 3600) / 60;
+            return rm > 0 ? $"~{h}h {rm}m left" : $"~{h}h left";
+        }
     }
 
     private static bool LooksLikeHwFilterFailure(string stderr)

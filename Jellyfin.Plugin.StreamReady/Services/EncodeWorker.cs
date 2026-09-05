@@ -182,16 +182,33 @@ public class EncodeWorker : BackgroundService
                 ? TimeSpan.FromTicks(item.RunTimeTicks.Value).TotalSeconds
                 : await _ffmpeg.ProbeDurationAsync(sourcePath, jobCts.Token).ConfigureAwait(false);
 
-            var progress = new Progress<double>(value =>
+            var progress = new Progress<EncodeProgressUpdate>(update =>
             {
                 // Values <= 1% are start/retry markers and may reset a false ~100% reading.
-                _store.UpdateProgress(job.Id, value, allowDecrease: value <= 1);
-                if (CurrentJob?.Id == job.Id)
+                _store.UpdateProgress(
+                    job.Id,
+                    update.Percent,
+                    update.Speed,
+                    update.Eta,
+                    allowDecrease: update.Percent <= 1);
+                if (CurrentJob?.Id != job.Id)
                 {
-                    if (value <= 1 || value >= CurrentJob.Progress)
-                    {
-                        CurrentJob.Progress = value;
-                    }
+                    return;
+                }
+
+                if (update.Percent <= 1 || update.Percent >= CurrentJob.Progress)
+                {
+                    CurrentJob.Progress = update.Percent;
+                }
+
+                if (update.Speed is not null)
+                {
+                    CurrentJob.Speed = update.Speed;
+                }
+
+                if (update.Eta is not null || update.Percent <= 1 || update.Percent >= 100)
+                {
+                    CurrentJob.Eta = update.Eta;
                 }
             });
 
