@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/ThuGie/jellyfin-plugin-streamready/main/images/logo.png",
     "versions": [
       {
+        "version": "1.0.4.0",
+        "changelog": "**Full Changelog**: https://github.com/ThuGie/jellyfin-plugin-streamready/compare/v1.0.2.0...v1.0.4.0",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/ThuGie/jellyfin-plugin-streamready/releases/download/v1.0.4.0/jellyfin-plugin-streamready_1.0.4.0.zip",
+        "checksum": "9abbf00a5ca6899beeca115cd008a36f",
+        "timestamp": "2026-09-05T15:48:13Z"
+      },
+      {
         "version": "1.0.3.0",
         "changelog": "Settings page now loads CSS the same way Jellyfin Enhanced does. Pushing a v* tag builds the zip, creates the GitHub Release, and writes the catalog checksum.",
         "targetAbi": "10.11.0.0",
