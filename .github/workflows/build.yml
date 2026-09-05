@@ -7,48 +7,71 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "9.0.x"
+
       - name: Publish
         run: dotnet publish Jellyfin.Plugin.StreamReady/Jellyfin.Plugin.StreamReady.csproj -c Release -o artifacts/build
+
       - name: Package zip
-        shell: bash
+        id: pkg
         run: |
-          python3 - <<'PY'
-          import json, hashlib, os, zipfile
-          from datetime import datetime, timezone
-          dll = "artifacts/build/Jellyfin.Plugin.StreamReady.dll"
-          os.makedirs("artifacts/pkg", exist_ok=True)
-          meta = {
-            "guid": "9d2e8c4a-1f6b-4a73-b8e0-5c9f3a7d2e11",
-            "name": "StreamReady",
-            "description": "Pre-encode oversized or incompatible movies and episodes so clients can Direct Play.",
-            "overview": "Pre-encode oversized or incompatible movies and episodes so clients can Direct Play.",
-            "owner": "ThuGie",
-            "category": "General",
-            "version": "1.0.0.0",
-            "changelog": "See GitHub Releases.",
-            "targetAbi": "10.11.0.0",
-            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-          }
-          zip_path = "artifacts/pkg/jellyfin-plugin-streamready_1.0.0.0.zip"
-          with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-              zf.write(dll, "Jellyfin.Plugin.StreamReady.dll")
-              zf.writestr("meta.json", json.dumps(meta, indent=2))
-          print(zip_path)
-          PY
+          python3 scripts/package_plugin.py \
+            --dll artifacts/build/Jellyfin.Plugin.StreamReady.dll \
+            --thumb Jellyfin.Plugin.StreamReady/thumb.png \
+            --csproj Jellyfin.Plugin.StreamReady/Jellyfin.Plugin.StreamReady.csproj \
+            --output-dir artifacts/pkg
+
       - uses: actions/upload-artifact@v4
         with:
           name: jellyfin-plugin-streamready
           path: artifacts/pkg/*.zip
+
       - name: Attach release zip
         if: github.event_name == 'release'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ github.event.release.tag_name }}" artifacts/pkg/*.zip --clobber
+
+      - name: Update catalog checksum
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.pkg.outputs.version }}"
+          CHECKSUM="${{ steps.pkg.outputs.checksum }}"
+          ZIP_NAME="${{ steps.pkg.outputs.zip_name }}"
+          SOURCE_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/${ZIP_NAME}"
+          python3 scripts/update_manifest.py \
+            --manifest manifest.json \
+            --version "$VERSION" \
+            --checksum "$CHECKSUM" \
+            --source-url "$SOURCE_URL" \
+            --changelog "${RELEASE_BODY:-See GitHub Releases.}"
+          cp manifest.json /tmp/streamready-manifest.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout -B main origin/main
+          cp /tmp/streamready-manifest.json manifest.json
+          git add manifest.json
+          if git diff --cached --quiet; then
+            echo "manifest.json already up to date"
+          else
+            git commit -m "chore: update catalog checksum for ${VERSION} [skip ci]"
+            git push origin main
+          fi

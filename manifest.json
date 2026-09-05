@@ -6,7 +6,7 @@
     "overview": "Pre-encode oversized or incompatible movies and episodes so clients can Direct Play.",
     "owner": "ThuGie",
     "category": "General",
-    "imageUrl": "",
+    "imageUrl": "https://raw.githubusercontent.com/ThuGie/jellyfin-plugin-streamready/main/images/logo.png",
     "versions": [
       {
         "version": "1.0.0.0",

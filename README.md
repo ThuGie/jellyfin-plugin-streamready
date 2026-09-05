@@ -1,5 +1,7 @@
 # Jellyfin StreamReady
 
+<img src="images/logo.png" alt="StreamReady" width="96" height="96">
+
 A Jellyfin **10.11** plugin that finds movies and episodes that are too large or incompatible for Direct Play, then pre-encodes them into a stream-friendly file.
 
 Typical problem file: MKV + HEVC Main 10 + Dolby Vision + TrueHD Atmos. Jellyfin live-transcodes that because the container, audio codec, and video range are unsupported. StreamReady does the same work ahead of time.
@@ -65,7 +67,11 @@ Default output preset is **Balanced**: MP4 + H.264 High + AAC 5.1 + SDR tone-map
 dotnet publish Jellyfin.Plugin.StreamReady/Jellyfin.Plugin.StreamReady.csproj -c Release
 ```
 
-Copy the published `Jellyfin.Plugin.StreamReady.dll` into the Jellyfin plugins directory.
+Copy the published `Jellyfin.Plugin.StreamReady.dll` (and `thumb.png`) into the Jellyfin plugins directory.
+
+GitHub Releases automatically attach the plugin zip and write the MD5 checksum into `manifest.json`, which Jellyfin uses to verify catalog installs.
+
+The catalog icon is `images/logo.png` at **256×256 PNG** (Jellyfin’s plugin cards display around 80px; 256 stays sharp on HiDPI). The same file is shipped as `thumb.png` inside the plugin zip.
 
 ## License
 

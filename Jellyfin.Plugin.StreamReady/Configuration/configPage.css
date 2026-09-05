@@ -87,6 +87,16 @@
     gap: 15px;
 }
 
+.sr-brand-logo {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    flex-shrink: 0;
+    display: block;
+    object-fit: cover;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
 #srSettingsSearchContainer {
     min-width: 260px;
     max-width: 350px;

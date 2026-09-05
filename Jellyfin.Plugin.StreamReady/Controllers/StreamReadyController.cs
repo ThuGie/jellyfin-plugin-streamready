@@ -44,6 +44,19 @@ public class StreamReadyController : ControllerBase
         return File(stream, "text/css");
     }
 
+    [HttpGet("thumb.png")]
+    public ActionResult GetThumb()
+    {
+        var resource = typeof(Plugin).Namespace + ".thumb.png";
+        var stream = typeof(Plugin).Assembly.GetManifestResourceStream(resource);
+        if (stream is null)
+        {
+            return NotFound();
+        }
+
+        return File(stream, "image/png");
+    }
+
     [HttpGet("status")]
     public ActionResult<object> GetStatus()
     {
