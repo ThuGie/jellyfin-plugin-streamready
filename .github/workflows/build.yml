@@ -84,18 +84,16 @@ jobs:
           set -euo pipefail
           SOURCE_URL="https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}/${ZIP_NAME}"
           CHANGELOG="$(gh release view "${GITHUB_REF_NAME}" --json body --jq '.body // ""')"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout --force -B main origin/main
           python3 scripts/update_manifest.py \
             --manifest manifest.json \
             --version "$VERSION" \
             --checksum "$CHECKSUM" \
             --source-url "$SOURCE_URL" \
             --changelog "${CHANGELOG:-See GitHub Releases.}"
-          cp manifest.json /tmp/streamready-manifest.json
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin main
-          git checkout -B main origin/main
-          cp /tmp/streamready-manifest.json manifest.json
           git add manifest.json
           if git diff --cached --quiet; then
             echo "manifest.json already up to date"
