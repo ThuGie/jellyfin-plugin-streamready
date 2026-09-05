@@ -184,10 +184,14 @@ public class EncodeWorker : BackgroundService
 
             var progress = new Progress<double>(value =>
             {
-                _store.UpdateProgress(job.Id, value);
+                // Values <= 1% are start/retry markers and may reset a false ~100% reading.
+                _store.UpdateProgress(job.Id, value, allowDecrease: value <= 1);
                 if (CurrentJob?.Id == job.Id)
                 {
-                    CurrentJob.Progress = value;
+                    if (value <= 1 || value >= CurrentJob.Progress)
+                    {
+                        CurrentJob.Progress = value;
+                    }
                 }
             });
 
