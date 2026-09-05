@@ -86,25 +86,35 @@ public class FfmpegRunner
     {
         get
         {
-            if (!string.IsNullOrWhiteSpace(EncoderVersion))
-            {
-                return true;
-            }
-
-            // Jellyfin found ffmpeg even when EncoderVersion is briefly unset.
             try
             {
-                return _mediaEncoder.SupportsEncoder("libx264")
-                    || _mediaEncoder.SupportsEncoder("libx265")
+                // Jellyfin has already probed ffmpeg by the time admins open settings.
+                if (!string.IsNullOrWhiteSpace(_mediaEncoder.EncoderPath))
+                {
+                    return true;
+                }
+
+                if (_mediaEncoder.EncoderVersion is not null && _mediaEncoder.EncoderVersion.Major > 0)
+                {
+                    return true;
+                }
+
+                if (_mediaEncoder.SupportsEncoder("libx264")
                     || _mediaEncoder.SupportsEncoder("h264_qsv")
                     || _mediaEncoder.SupportsEncoder("h264_vaapi")
-                    || _mediaEncoder.SupportsEncoder("h264_nvenc")
-                    || !string.IsNullOrWhiteSpace(_mediaEncoder.EncoderPath);
+                    || _mediaEncoder.SupportsHwaccel("qsv")
+                    || _mediaEncoder.SupportsHwaccel("vaapi"))
+                {
+                    return true;
+                }
             }
-            catch
+            catch (Exception ex)
             {
-                return !string.IsNullOrWhiteSpace(EncoderPath);
+                _logger.LogDebug(ex, "StreamReady IsReady probe failed");
             }
+
+            // Last resort: bare "ffmpeg" on PATH (Pre-Transcode strategy).
+            return !string.IsNullOrWhiteSpace(EncoderPath);
         }
     }
 
@@ -417,30 +427,44 @@ public class FfmpegRunner
 
     private HardwareAccelerationType DetectBestHardware()
     {
-        // Prefer what the user's Synology/sc-ffmpeg7 log typically exposes first.
-        if (EncoderSupports(HardwareAccelerationType.qsv))
+        // Prefer hwaccel methods Jellyfin already enumerated (Synology/sc-ffmpeg7: qsv + vaapi).
+        try
         {
-            return HardwareAccelerationType.qsv;
-        }
+            if (_mediaEncoder.SupportsHwaccel("qsv")
+                || _mediaEncoder.SupportsEncoder("h264_qsv")
+                || _mediaEncoder.SupportsEncoder("hevc_qsv"))
+            {
+                return HardwareAccelerationType.qsv;
+            }
 
-        if (EncoderSupports(HardwareAccelerationType.nvenc))
-        {
-            return HardwareAccelerationType.nvenc;
-        }
+            if (_mediaEncoder.SupportsHwaccel("cuda")
+                || _mediaEncoder.SupportsEncoder("h264_nvenc")
+                || _mediaEncoder.SupportsEncoder("hevc_nvenc"))
+            {
+                return HardwareAccelerationType.nvenc;
+            }
 
-        if (EncoderSupports(HardwareAccelerationType.amf))
-        {
-            return HardwareAccelerationType.amf;
-        }
+            if (_mediaEncoder.SupportsEncoder("h264_amf") || _mediaEncoder.SupportsEncoder("hevc_amf"))
+            {
+                return HardwareAccelerationType.amf;
+            }
 
-        if (EncoderSupports(HardwareAccelerationType.videotoolbox))
-        {
-            return HardwareAccelerationType.videotoolbox;
-        }
+            if (_mediaEncoder.SupportsHwaccel("videotoolbox")
+                || _mediaEncoder.SupportsEncoder("h264_videotoolbox"))
+            {
+                return HardwareAccelerationType.videotoolbox;
+            }
 
-        if (EncoderSupports(HardwareAccelerationType.vaapi))
+            if (_mediaEncoder.SupportsHwaccel("vaapi")
+                || _mediaEncoder.SupportsEncoder("h264_vaapi")
+                || _mediaEncoder.SupportsEncoder("hevc_vaapi"))
+            {
+                return HardwareAccelerationType.vaapi;
+            }
+        }
+        catch (Exception ex)
         {
-            return HardwareAccelerationType.vaapi;
+            _logger.LogWarning(ex, "StreamReady hardware detection failed");
         }
 
         return HardwareAccelerationType.none;

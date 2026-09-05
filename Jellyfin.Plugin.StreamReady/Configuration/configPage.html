@@ -561,18 +561,39 @@
                 return false;
             }
 
+            function pick(obj, key) {
+                if (!obj) return undefined;
+                if (obj[key] !== undefined && obj[key] !== null) return obj[key];
+                var pascal = key.charAt(0).toUpperCase() + key.slice(1);
+                return obj[pascal];
+            }
+
             function refreshStatus() {
                 api('/status').then(function (s) {
                     var grid = val('srStatusGrid');
                     if (!grid) return;
+                    var ready = !!pick(s, 'ffmpegReady');
+                    var path = pick(s, 'ffmpegPath') || '';
+                    var version = pick(s, 'ffmpegVersion') || '';
+                    var hw = pick(s, 'hardwareAccel') || 'Software (CPU)';
+                    var candidateCount = pick(s, 'candidateCount') || 0;
+                    var queuedCount = pick(s, 'queuedCount') || 0;
+                    var runningCount = pick(s, 'runningCount') || 0;
+                    var paused = !!pick(s, 'paused');
+                    var currentJob = pick(s, 'currentJob');
+                    var workerDetail = paused
+                        ? 'Paused'
+                        : (currentJob
+                            ? ((pick(currentJob, 'name') || pick(currentJob, 'Name') || 'Job') + ' — ' + Math.round(pick(currentJob, 'progress') || pick(currentJob, 'Progress') || 0) + '%')
+                            : 'Idle');
                     var cards = [
-                        card(s.ffmpegReady ? 'ok' : 'warn', 'movie_filter', 'FFmpeg', s.ffmpegReady ? ((s.ffmpegVersion ? 'v' + s.ffmpegVersion + ' · ' : '') + (s.ffmpegPath || 'ready')) : 'Not found', null),
-                        card(s.ffmpegReady ? 'ok' : 'warn', 'memory', 'Hardware', s.hardwareAccel || 'Software (CPU)', 'encoding'),
-                        card(s.autoDirectPreTranscode ? 'warn' : 'ok', 'tune', 'Mode', s.autoDirectPreTranscode ? 'Auto Direct Pre-Transcode' : 'Manual', null),
-                        card(s.configured ? 'ok' : 'warn', 'video_library', 'Libraries', s.configured ? 'Selected' : 'Select libraries to begin', 'libraries'),
-                        card('ok', 'playlist_add_check', 'Needs encoding', String(s.candidateCount || 0), 'needs'),
-                        card(s.runningCount ? 'warn' : 'ok', 'queue', 'Queue', (s.queuedCount || 0) + ' waiting, ' + (s.runningCount || 0) + ' running', 'queue'),
-                        card(s.paused ? 'warn' : 'ok', s.paused ? 'pause' : 'play_arrow', 'Worker', s.paused ? 'Paused' : (s.currentJob ? (s.currentJob.Name + ' — ' + Math.round(s.currentJob.Progress) + '%') : 'Idle'), 'queue')
+                        card(ready ? 'ok' : 'warn', 'movie_filter', 'FFmpeg', ready ? ((version ? 'v' + version + ' · ' : '') + (path || 'ready')) : 'Not found', null),
+                        card(ready && hw.indexOf('Software') < 0 ? 'ok' : (ready ? 'warn' : 'warn'), 'memory', 'Hardware', hw, 'encoding'),
+                        card(pick(s, 'autoDirectPreTranscode') ? 'warn' : 'ok', 'tune', 'Mode', pick(s, 'autoDirectPreTranscode') ? 'Auto Direct Pre-Transcode' : 'Manual', null),
+                        card(pick(s, 'configured') ? 'ok' : 'warn', 'video_library', 'Libraries', pick(s, 'configured') ? 'Selected' : 'Select libraries to begin', 'libraries'),
+                        card(candidateCount ? 'ok' : 'warn', 'playlist_add_check', 'Needs encoding', String(candidateCount), 'needs'),
+                        card(runningCount ? 'warn' : 'ok', 'queue', 'Queue', queuedCount + ' waiting, ' + runningCount + ' running', 'queue'),
+                        card(paused ? 'warn' : 'ok', paused ? 'pause' : 'play_arrow', 'Worker', workerDetail, 'queue')
                     ];
                     grid.innerHTML = cards.join('');
                 }).catch(function () {});
@@ -588,34 +609,49 @@
                 var reasonEl = val('srFilterReason');
                 var type = typeEl ? typeEl.value : '';
                 var reason = reasonEl ? reasonEl.value : '';
-                var q = [];
+                var q = ['limit=200', 'skip=0'];
                 if (type) q.push('itemType=' + encodeURIComponent(type));
                 if (reason) q.push('reason=' + encodeURIComponent(reason));
-                api('/candidates' + (q.length ? '?' + q.join('&') : '')).then(function (rows) {
-                    visibleCandidates = rows || [];
-                    renderCandidates(visibleCandidates);
+                api('/candidates?' + q.join('&')).then(function (payload) {
+                    var rows = [];
+                    var total = 0;
+                    if (Array.isArray(payload)) {
+                        rows = payload;
+                        total = payload.length;
+                    } else if (payload) {
+                        rows = payload.items || payload.Items || [];
+                        total = payload.total || payload.Total || rows.length;
+                    }
+                    visibleCandidates = rows;
+                    renderCandidates(visibleCandidates, total);
                 }).catch(function () {
                     var host = val('srCandidates');
                     if (host) host.innerHTML = '<div class="sr-empty">Could not load candidates.</div>';
                 });
             }
 
-            function renderCandidates(rows) {
+            function renderCandidates(rows, total) {
                 var host = val('srCandidates');
                 if (!host) return;
+                total = total || rows.length;
                 if (!rows.length) {
                     host.innerHTML = '<div class="sr-empty"><p>Nothing needs encoding yet.</p><p>Save your libraries, then scan. Matches show up here so you can encode one file or a selection.</p><button type="button" class="raised button-submit emby-button sr-scan-now">Scan now</button></div>';
                     return;
                 }
-                var html = '<table class="sr-table"><thead><tr><th></th><th>Title</th><th>Why</th><th>Plan</th><th>Size</th><th></th></tr></thead><tbody>';
+                var html = '';
+                if (total > rows.length) {
+                    html += '<div class="sr-note-banner" style="margin-bottom:12px;"><i class="material-icons sr-info-icon">info</i><div>Showing ' + rows.length + ' of ' + total + ' files (largest first). Use filters or Encode all visible for this page.</div></div>';
+                }
+                html += '<table class="sr-table"><thead><tr><th></th><th>Title</th><th>Why</th><th>Plan</th><th>Size</th><th></th></tr></thead><tbody>';
                 rows.forEach(function (row) {
-                    html += '<tr><td><input type="checkbox" class="sr-pick" data-id="' + row.id + '"/></td>';
-                    html += '<td><strong>' + escapeHtml(row.name) + '</strong><div class="sr-service-detail">' + escapeHtml((row.seriesName ? row.seriesName + ' · ' : '') + row.itemType + ' · ' + row.container + ' · ' + row.videoCodec + ' / ' + row.audioCodec + ' · ' + row.videoRange) + '</div></td>';
-                    html += '<td>' + (row.reasons || []).map(function (r) { return '<span class="sr-chip">' + escapeHtml(r) + '</span>'; }).join('') + '</td>';
-                    html += '<td><span class="sr-chip sr-' + String(row.plannedAction || '').toLowerCase() + '">' + escapeHtml(row.plannedAction) + '</span></td>';
-                    html += '<td>' + escapeHtml(row.sizeLabel || '') + '</td>';
-                    html += '<td class="sr-row-actions"><button type="button" class="raised raised-mini emby-button sr-encode-one" data-id="' + row.id + '">Encode</button>';
-                    html += '<button type="button" class="raised raised-mini emby-button sr-ignore-one" data-id="' + row.id + '">Ignore</button></td></tr>';
+                    var id = row.id || row.Id;
+                    html += '<tr><td><input type="checkbox" class="sr-pick" data-id="' + id + '"/></td>';
+                    html += '<td><strong>' + escapeHtml(row.name || row.Name) + '</strong><div class="sr-service-detail">' + escapeHtml(((row.seriesName || row.SeriesName) ? (row.seriesName || row.SeriesName) + ' · ' : '') + (row.itemType || row.ItemType) + ' · ' + (row.container || row.Container) + ' · ' + (row.videoCodec || row.VideoCodec) + ' / ' + (row.audioCodec || row.AudioCodec) + ' · ' + (row.videoRange || row.VideoRange)) + '</div></td>';
+                    html += '<td>' + (row.reasons || row.Reasons || []).map(function (r) { return '<span class="sr-chip">' + escapeHtml(r) + '</span>'; }).join('') + '</td>';
+                    html += '<td><span class="sr-chip sr-' + String(row.plannedAction || row.PlannedAction || '').toLowerCase() + '">' + escapeHtml(row.plannedAction || row.PlannedAction) + '</span></td>';
+                    html += '<td>' + escapeHtml(row.sizeLabel || row.SizeLabel || '') + '</td>';
+                    html += '<td class="sr-row-actions"><button type="button" class="raised raised-mini emby-button sr-encode-one" data-id="' + id + '">Encode</button>';
+                    html += '<button type="button" class="raised raised-mini emby-button sr-ignore-one" data-id="' + id + '">Ignore</button></td></tr>';
                 });
                 html += '</tbody></table>';
                 host.innerHTML = html;
