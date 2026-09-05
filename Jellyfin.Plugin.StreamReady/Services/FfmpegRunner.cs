@@ -260,31 +260,21 @@ public class FfmpegRunner
     private static bool TryParseProgress(string line, double durationSeconds, out double percent)
     {
         percent = 0;
-        if (string.IsNullOrWhiteSpace(line))
+        if (string.IsNullOrWhiteSpace(line) || durationSeconds <= 0)
         {
             return false;
         }
 
-        // Preferred: -progress pipe:1 → out_time_ms=1234567
-        if (line.StartsWith("out_time_ms=", StringComparison.OrdinalIgnoreCase))
-        {
-            var raw = line["out_time_ms=".Length..].Trim();
-            if (long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var ms)
-                && durationSeconds > 0
-                && ms >= 0)
-            {
-                percent = Math.Clamp(ms / 1000d / durationSeconds * 100d, 0, 99.5);
-                return true;
-            }
-
-            return false;
-        }
-
-        // out_time=00:01:23.456789
+        // Prefer unambiguous clock time from -progress.
         if (line.StartsWith("out_time=", StringComparison.OrdinalIgnoreCase))
         {
             var raw = line["out_time=".Length..].Trim();
-            if (TimeSpan.TryParse(raw, CultureInfo.InvariantCulture, out var ts) && durationSeconds > 0)
+            if (raw is "N/A" or "")
+            {
+                return false;
+            }
+
+            if (TimeSpan.TryParse(raw, CultureInfo.InvariantCulture, out var ts))
             {
                 percent = Math.Clamp(ts.TotalSeconds / durationSeconds * 100d, 0, 99.5);
                 return true;
@@ -293,9 +283,36 @@ public class FfmpegRunner
             return false;
         }
 
+        // out_time_us is microseconds (correct name).
+        if (line.StartsWith("out_time_us=", StringComparison.OrdinalIgnoreCase))
+        {
+            var raw = line["out_time_us=".Length..].Trim();
+            if (long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var us) && us >= 0)
+            {
+                percent = Math.Clamp(us / 1_000_000d / durationSeconds * 100d, 0, 99.5);
+                return true;
+            }
+
+            return false;
+        }
+
+        // out_time_ms is MISNAMED in ffmpeg: the value is microseconds, not milliseconds.
+        // Treating it as ms makes a few seconds of encode look like ~100%.
+        if (line.StartsWith("out_time_ms=", StringComparison.OrdinalIgnoreCase))
+        {
+            var raw = line["out_time_ms=".Length..].Trim();
+            if (long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var misnamedUs) && misnamedUs >= 0)
+            {
+                percent = Math.Clamp(misnamedUs / 1_000_000d / durationSeconds * 100d, 0, 99.5);
+                return true;
+            }
+
+            return false;
+        }
+
         // Fallback: classic stats line time=HH:MM:SS.xx
         var match = TimeRegex.Match(line);
-        if (!match.Success || durationSeconds <= 0)
+        if (!match.Success)
         {
             return false;
         }

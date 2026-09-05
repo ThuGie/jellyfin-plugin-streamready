@@ -239,7 +239,7 @@ public class JobStore
         }
     }
 
-    public void UpdateProgress(string id, double progress, string? speed = null)
+    public void UpdateProgress(string id, double progress, string? speed = null, bool allowDecrease = false)
     {
         lock (_gate)
         {
@@ -249,12 +249,29 @@ public class JobStore
                 return;
             }
 
-            job.Progress = Math.Clamp(progress, 0, 100);
+            var next = Math.Clamp(progress, 0, 100);
+            // Ignore noisy backwards ticks (e.g. parser glitches) unless this is an intentional reset.
+            if (!allowDecrease && next < job.Progress && job.Progress < 100)
+            {
+                if (speed is not null)
+                {
+                    job.Speed = speed;
+                }
+
+                return;
+            }
+
+            job.Progress = next;
             if (speed is not null)
             {
                 job.Speed = speed;
             }
         }
+    }
+
+    public void ResetProgress(string id, double progress = 0)
+    {
+        UpdateProgress(id, progress, allowDecrease: true);
     }
 
     public void UpdateEncodePlan(string id, EncodePlan plan)
