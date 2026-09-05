@@ -191,6 +191,28 @@ public class EncodeWorker : BackgroundService
                 }
             });
 
+            void ApplyPlan(EncodePlan plan)
+            {
+                _store.UpdateEncodePlan(job.Id, plan);
+                if (CurrentJob?.Id != job.Id)
+                {
+                    return;
+                }
+
+                CurrentJob.StatusDetail = plan.SoftFallback ? "[software fallback] " + plan.Summary : plan.Summary;
+                CurrentJob.VideoEncoder = plan.VideoEncoder;
+                CurrentJob.HardwarePath = plan.HardwareLabel + " · decode " + plan.DecodeMode;
+                CurrentJob.ToneMap = plan.ToneMap;
+                CurrentJob.Filters = plan.Filters;
+            }
+
+            var videoRange = job.VideoRange;
+            if (string.IsNullOrWhiteSpace(videoRange)
+                && job.Reasons.Any(r => r.Equals("VideoRange", StringComparison.OrdinalIgnoreCase)))
+            {
+                videoRange = "HDR";
+            }
+
             await _ffmpeg.EncodeAsync(
                     sourcePath,
                     tempPath,
@@ -199,7 +221,8 @@ public class EncodeWorker : BackgroundService
                     duration,
                     progress,
                     jobCts.Token,
-                    job.VideoRange)
+                    videoRange,
+                    ApplyPlan)
                 .ConfigureAwait(false);
 
             if (_store.IsCancelled(job.Id) || jobCts.IsCancellationRequested)

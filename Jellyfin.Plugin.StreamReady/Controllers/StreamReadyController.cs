@@ -72,7 +72,7 @@ public class StreamReadyController : ControllerBase
         var ffmpegReady = _ffmpeg.IsReady;
         var hwLabel = _ffmpeg.DescribeHardware(config);
         var candidateCount = _store.GetCandidates().Count;
-        _logger.LogInformation(
+        _logger.LogDebug(
             "StreamReady status: ready={Ready} path={Path} version={Version} hw={Hw} candidates={Count} lastFound={LastFound}",
             ffmpegReady,
             ffmpegPath,
@@ -104,7 +104,14 @@ public class StreamReadyController : ControllerBase
                     name = current.Name,
                     progress = current.Progress,
                     status = current.Status.ToString(),
-                    action = current.Action.ToString()
+                    action = current.Action.ToString(),
+                    statusDetail = current.StatusDetail,
+                    videoEncoder = current.VideoEncoder,
+                    hardwarePath = current.HardwarePath,
+                    toneMap = current.ToneMap,
+                    filters = current.Filters,
+                    videoRange = current.VideoRange,
+                    speed = current.Speed
                 }
         };
     }
@@ -327,7 +334,14 @@ public class StreamReadyController : ControllerBase
             queuedAt = j.QueuedAt,
             startedAt = j.StartedAt,
             finishedAt = j.FinishedAt,
-            reasons = j.Reasons
+            reasons = j.Reasons,
+            statusDetail = j.StatusDetail,
+            videoEncoder = j.VideoEncoder,
+            hardwarePath = j.HardwarePath,
+            toneMap = j.ToneMap,
+            filters = j.Filters,
+            videoRange = j.VideoRange,
+            speed = j.Speed
         };
     }
 

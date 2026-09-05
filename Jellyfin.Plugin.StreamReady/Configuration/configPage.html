@@ -67,6 +67,7 @@
                         <legend class="sectionTitle"><i class="material-icons sr-legend-icon">sensors</i>Status</legend>
                         <div class="configSection">
                             <div class="sr-service-dashboard" id="srStatusGrid"></div>
+                            <div id="srActiveEncode" class="sr-note-banner" style="display:none;margin-top:12px;"></div>
                         </div>
                     </fieldset>
                     <fieldset class="sr-fieldset-wide">
@@ -601,10 +602,11 @@
                     var runningCount = pick(s, 'runningCount') || 0;
                     var paused = !!pick(s, 'paused');
                     var currentJob = pick(s, 'currentJob');
+                    var pct = currentJob ? Math.round(pick(currentJob, 'progress') || 0) : 0;
                     var workerDetail = paused
                         ? 'Paused'
                         : (currentJob
-                            ? ((pick(currentJob, 'name') || pick(currentJob, 'Name') || 'Job') + ' — ' + Math.round(pick(currentJob, 'progress') || pick(currentJob, 'Progress') || 0) + '%')
+                            ? ((pick(currentJob, 'name') || 'Job') + ' — ' + pct + '%')
                             : 'Idle');
                     var cards = [
                         card(ready ? 'ok' : 'warn', 'movie_filter', 'FFmpeg', ready ? ((version ? 'v' + version + ' · ' : '') + (path || 'ready')) : 'Not found', null),
@@ -616,6 +618,30 @@
                         card(paused ? 'warn' : 'ok', paused ? 'pause' : 'play_arrow', 'Worker', workerDetail, 'queue')
                     ];
                     grid.innerHTML = cards.join('');
+
+                    var active = val('srActiveEncode');
+                    if (active) {
+                        if (currentJob && !paused) {
+                            var encoder = pick(currentJob, 'videoEncoder') || '?';
+                            var hwPath = pick(currentJob, 'hardwarePath') || hw;
+                            var tone = pick(currentJob, 'toneMap') ? 'tone-map ON' : 'tone-map OFF';
+                            var filters = pick(currentJob, 'filters') || '(none)';
+                            var detail = pick(currentJob, 'statusDetail') || '';
+                            var range = pick(currentJob, 'videoRange') || 'unknown';
+                            active.style.display = '';
+                            active.innerHTML = '<i class="material-icons sr-info-icon">movie_filter</i><div><strong>Encoding:</strong> '
+                                + escapeHtml(pick(currentJob, 'name') || '')
+                                + ' — <strong>' + pct + '%</strong><br/>'
+                                + '<span class="sr-service-detail">'
+                                + escapeHtml(encoder + ' · ' + hwPath + ' · ' + tone + ' · range ' + range)
+                                + (detail ? '<br/>' + escapeHtml(detail) : '')
+                                + (filters && filters !== '(none)' ? '<br/>filters: ' + escapeHtml(filters.length > 120 ? filters.slice(0, 120) + '…' : filters) : '')
+                                + '</span></div>';
+                        } else {
+                            active.style.display = 'none';
+                            active.innerHTML = '';
+                        }
+                    }
                 }).catch(function (err) {
                     var grid = val('srStatusGrid');
                     if (grid) {
@@ -697,7 +723,15 @@
                     }
                     var html = '<table class="sr-table"><thead><tr><th>Title</th><th>Status</th><th>Progress</th><th></th></tr></thead><tbody>';
                     rows.forEach(function (row) {
-                        html += '<tr><td><strong>' + escapeHtml(row.name) + '</strong><div class="sr-service-detail">' + escapeHtml(row.action + (row.error ? ' · ' + row.error : '')) + '</div></td>';
+                        var detail = pick(row, 'statusDetail') || '';
+                        var encoder = pick(row, 'videoEncoder') || '';
+                        var hwPath = pick(row, 'hardwarePath') || '';
+                        var tone = pick(row, 'toneMap') ? 'tone-map ON' : '';
+                        var meta = [row.action, encoder, hwPath, tone].filter(Boolean).join(' · ');
+                        if (row.error) meta += (meta ? ' · ' : '') + row.error;
+                        if (detail && detail.indexOf(meta) < 0) meta += (meta ? '<br/>' : '') + escapeHtml(detail);
+                        else meta = escapeHtml(meta);
+                        html += '<tr><td><strong>' + escapeHtml(row.name) + '</strong><div class="sr-service-detail">' + meta + '</div></td>';
                         html += '<td>' + escapeHtml(row.status) + '</td>';
                         html += '<td><div class="sr-progress"><span style="width:' + Math.round(row.progress || 0) + '%"></span></div> ' + Math.round(row.progress || 0) + '%</td>';
                         html += '<td class="sr-row-actions">';
@@ -809,7 +843,7 @@
                     var tab = active && (active.getAttribute('data-tab') || active.id);
                     if (tab === 'queue') loadQueue();
                     if (tab === 'needs') loadCandidates();
-                }, 4000);
+                }, 2000);
             }
 
             if (!window.__streamReadyUiBound) {

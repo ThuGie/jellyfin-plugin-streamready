@@ -92,6 +92,42 @@ public class EncodeJob
     public List<string> Reasons { get; set; } = [];
 
     public string VideoRange { get; set; } = string.Empty;
+
+    /// <summary>Human-readable encode plan (encoder, tone-map, filters, HW path).</summary>
+    public string StatusDetail { get; set; } = string.Empty;
+
+    public string VideoEncoder { get; set; } = string.Empty;
+
+    public string HardwarePath { get; set; } = string.Empty;
+
+    public bool ToneMap { get; set; }
+
+    public string Filters { get; set; } = string.Empty;
+
+    public string? Speed { get; set; }
+}
+
+public class EncodePlan
+{
+    public string Action { get; set; } = string.Empty;
+
+    public string VideoEncoder { get; set; } = string.Empty;
+
+    public string HardwareLabel { get; set; } = "Software (CPU)";
+
+    public string DecodeMode { get; set; } = "software";
+
+    public bool ToneMap { get; set; }
+
+    public string Filters { get; set; } = string.Empty;
+
+    public string PixelFormat { get; set; } = string.Empty;
+
+    public bool SoftFallback { get; set; }
+
+    public string Summary { get; set; } = string.Empty;
+
+    public string Args { get; set; } = string.Empty;
 }
 
 public class ProcessedMarker

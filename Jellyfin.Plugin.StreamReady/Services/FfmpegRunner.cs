@@ -179,7 +179,8 @@ public class FfmpegRunner
         double durationSeconds,
         IProgress<double> progress,
         CancellationToken cancellationToken,
-        string? videoRange = null)
+        string? videoRange = null,
+        Action<EncodePlan>? onPlan = null)
     {
         var ffmpeg = EncoderPath;
         if (!IsReady)
@@ -187,14 +188,23 @@ public class FfmpegRunner
             throw new InvalidOperationException("FFmpeg is not available. Check Dashboard → Playback → Transcoding.");
         }
 
-        var args = BuildArgs(inputPath, outputPath, action, config, videoRange, forceSoftware: false);
-        _logger.LogInformation("StreamReady ffmpeg ({Hw}): {Bin} {Args}", DescribeHardware(config), ffmpeg, args);
+        var plan = BuildEncodePlan(inputPath, outputPath, action, config, videoRange, forceSoftware: false);
+        onPlan?.Invoke(plan);
+        _logger.LogInformation(
+            "StreamReady encode plan: {Summary} | encoder={Encoder} tonemap={ToneMap} filters={Filters}",
+            plan.Summary,
+            plan.VideoEncoder,
+            plan.ToneMap,
+            string.IsNullOrEmpty(plan.Filters) ? "(none)" : plan.Filters);
+        _logger.LogInformation("StreamReady ffmpeg: {Bin} {Args}", ffmpeg, plan.Args);
 
-        var (exit, _, stderr) = await RunEncodeAsync(ffmpeg, args, durationSeconds, progress, cancellationToken)
+        progress.Report(0.5);
+        var (exit, _, stderr) = await RunEncodeAsync(ffmpeg, plan.Args, durationSeconds, progress, cancellationToken)
             .ConfigureAwait(false);
 
         if (exit == 0)
         {
+            progress.Report(100);
             return;
         }
 
@@ -208,12 +218,15 @@ public class FfmpegRunner
                 "StreamReady hardware encode failed (exit {Exit}); retrying with software encode. Tail: {Tail}",
                 exit,
                 Truncate(stderr, 500));
-            var softArgs = BuildArgs(inputPath, outputPath, action, config, videoRange, forceSoftware: true);
-            _logger.LogInformation("StreamReady ffmpeg (software fallback): {Bin} {Args}", ffmpeg, softArgs);
-            (exit, _, stderr) = await RunEncodeAsync(ffmpeg, softArgs, durationSeconds, progress, cancellationToken)
+            plan = BuildEncodePlan(inputPath, outputPath, action, config, videoRange, forceSoftware: true);
+            onPlan?.Invoke(plan);
+            _logger.LogInformation("StreamReady ffmpeg (software fallback): {Bin} {Args}", ffmpeg, plan.Args);
+            progress.Report(0.5);
+            (exit, _, stderr) = await RunEncodeAsync(ffmpeg, plan.Args, durationSeconds, progress, cancellationToken)
                 .ConfigureAwait(false);
             if (exit == 0)
             {
+                progress.Report(100);
                 return;
             }
         }
@@ -228,25 +241,71 @@ public class FfmpegRunner
         IProgress<double> progress,
         CancellationToken cancellationToken)
     {
+        void HandleLine(string line)
+        {
+            if (TryParseProgress(line, durationSeconds, out var pct))
+            {
+                progress.Report(pct);
+            }
+        }
+
         return await RunProcessAsync(
             ffmpeg,
             args,
-            line =>
-            {
-                var match = TimeRegex.Match(line);
-                if (!match.Success || durationSeconds <= 0)
-                {
-                    return;
-                }
-
-                var hours = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
-                var minutes = int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
-                var seconds = double.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture);
-                var current = (hours * 3600) + (minutes * 60) + seconds;
-                progress.Report(Math.Clamp(current / durationSeconds * 100d, 0, 99.5));
-            },
-            null,
+            HandleLine,
+            HandleLine,
             cancellationToken).ConfigureAwait(false);
+    }
+
+    private static bool TryParseProgress(string line, double durationSeconds, out double percent)
+    {
+        percent = 0;
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return false;
+        }
+
+        // Preferred: -progress pipe:1 → out_time_ms=1234567
+        if (line.StartsWith("out_time_ms=", StringComparison.OrdinalIgnoreCase))
+        {
+            var raw = line["out_time_ms=".Length..].Trim();
+            if (long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var ms)
+                && durationSeconds > 0
+                && ms >= 0)
+            {
+                percent = Math.Clamp(ms / 1000d / durationSeconds * 100d, 0, 99.5);
+                return true;
+            }
+
+            return false;
+        }
+
+        // out_time=00:01:23.456789
+        if (line.StartsWith("out_time=", StringComparison.OrdinalIgnoreCase))
+        {
+            var raw = line["out_time=".Length..].Trim();
+            if (TimeSpan.TryParse(raw, CultureInfo.InvariantCulture, out var ts) && durationSeconds > 0)
+            {
+                percent = Math.Clamp(ts.TotalSeconds / durationSeconds * 100d, 0, 99.5);
+                return true;
+            }
+
+            return false;
+        }
+
+        // Fallback: classic stats line time=HH:MM:SS.xx
+        var match = TimeRegex.Match(line);
+        if (!match.Success || durationSeconds <= 0)
+        {
+            return false;
+        }
+
+        var hours = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+        var minutes = int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
+        var seconds = double.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture);
+        var current = (hours * 3600) + (minutes * 60) + seconds;
+        percent = Math.Clamp(current / durationSeconds * 100d, 0, 99.5);
+        return true;
     }
 
     private static bool LooksLikeHwFilterFailure(string stderr)
@@ -273,7 +332,7 @@ public class FfmpegRunner
         return value[^max..];
     }
 
-    public string BuildArgs(
+    public EncodePlan BuildEncodePlan(
         string inputPath,
         string outputPath,
         EncodeAction action,
@@ -282,27 +341,26 @@ public class FfmpegRunner
         bool forceSoftware = false)
     {
         var sb = new StringBuilder();
-        sb.Append("-y -hide_banner -loglevel error -stats ");
+        // -progress pipe:1 is reliable; -loglevel error used to hide classic time= stats (0% forever).
+        sb.Append("-y -hide_banner -loglevel warning -progress pipe:1 -nostats ");
 
         var hw = forceSoftware || action != EncodeAction.Full
             ? HardwareAccelerationType.none
             : ResolveHardware(config);
         var vf = action == EncodeAction.Full ? BuildVideoFilter(config, videoRange) : string.Empty;
         var hasSoftwareFilters = !string.IsNullOrEmpty(vf);
+        var toneMap = hasSoftwareFilters && vf.Contains("tonemap", StringComparison.OrdinalIgnoreCase);
 
-        // Soft filters need system-memory frames. Keep -hwaccel only when encoding on GPU
-        // without a soft filter graph (QSV/VAAPI + zscale/tonemap is unreliable on Synology).
         var (videoEncoder, extra) = action == EncodeAction.Full
             ? ResolveVideoEncoder(EncodePlanner.DestinationVideoCodec(config), config, hasSoftwareFilters, forceSoftware)
-            : ("", "");
+            : (action == EncodeAction.Remux ? "copy" : "copy (video)", string.Empty);
 
         var usingHwEncode = !forceSoftware
             && action == EncodeAction.Full
             && videoEncoder.Contains('_')
             && !videoEncoder.StartsWith("lib", StringComparison.OrdinalIgnoreCase);
 
-        // NVENC/VAAPI can use -hwaccel for decode. QSV + Synology sc-ffmpeg7 often breaks
-        // when -hwaccel qsv feeds soft format=nv12; prefer software decode → nv12 → h264_qsv.
+        var decodeMode = "software";
         if (usingHwEncode
             && !hasSoftwareFilters
             && !videoEncoder.Contains("qsv", StringComparison.OrdinalIgnoreCase))
@@ -311,6 +369,7 @@ public class FfmpegRunner
             if (!string.IsNullOrEmpty(hwaccel))
             {
                 sb.Append("-hwaccel ").Append(hwaccel).Append(' ');
+                decodeMode = hwaccel;
             }
         }
 
@@ -328,6 +387,7 @@ public class FfmpegRunner
         var crf = EncodePlanner.DestinationCrf(config);
         var audioBitrate = channels <= 2 ? "192k" : "384k";
         var preset = string.IsNullOrWhiteSpace(config.FfmpegPreset) ? "medium" : config.FfmpegPreset;
+        var pixelFormat = string.Empty;
 
         switch (action)
         {
@@ -347,7 +407,6 @@ public class FfmpegRunner
                     }
                     else if (videoEncoder.Contains("qsv", StringComparison.OrdinalIgnoreCase))
                     {
-                        // Soft filters produce yuv420p; QSV needs nv12 without a full hwupload graph.
                         vf += ",format=nv12";
                     }
 
@@ -356,10 +415,12 @@ public class FfmpegRunner
                 else if (videoEncoder.Contains("qsv", StringComparison.OrdinalIgnoreCase))
                 {
                     sb.Append("-vf format=nv12 ");
+                    vf = "format=nv12";
                 }
                 else if (videoEncoder.Contains("vaapi", StringComparison.OrdinalIgnoreCase))
                 {
                     sb.Append("-vf format=nv12,hwupload ");
+                    vf = "format=nv12,hwupload";
                 }
 
                 sb.Append("-c:v ").Append(videoEncoder).Append(' ').Append(extra);
@@ -367,14 +428,17 @@ public class FfmpegRunner
                 {
                     sb.Append("-crf ").Append(crf).Append(" -preset ").Append(preset).Append(' ');
                     sb.Append("-pix_fmt yuv420p ");
+                    pixelFormat = "yuv420p";
                 }
                 else if (videoEncoder.Contains("nvenc", StringComparison.OrdinalIgnoreCase))
                 {
                     sb.Append("-cq ").Append(Math.Max(crf, 16)).Append(" -preset p4 -pix_fmt yuv420p ");
+                    pixelFormat = "yuv420p";
                 }
                 else if (videoEncoder.Contains("qsv", StringComparison.OrdinalIgnoreCase))
                 {
                     sb.Append("-global_quality ").Append(crf).Append(" -pix_fmt nv12 ");
+                    pixelFormat = "nv12";
                 }
                 else if (videoEncoder.Contains("vaapi", StringComparison.OrdinalIgnoreCase))
                 {
@@ -383,6 +447,7 @@ public class FfmpegRunner
                 else
                 {
                     sb.Append("-pix_fmt yuv420p ");
+                    pixelFormat = "yuv420p";
                 }
 
                 sb.Append("-c:a aac -b:a ").Append(audioBitrate)
@@ -403,20 +468,68 @@ public class FfmpegRunner
         }
 
         sb.Append(Quote(outputPath));
-        return sb.ToString();
+
+        var hardwareLabel = forceSoftware || videoEncoder.StartsWith("lib", StringComparison.OrdinalIgnoreCase)
+            ? "Software (CPU)"
+            : DescribeHardware(config);
+
+        var summaryParts = new List<string>
+        {
+            action.ToString(),
+            videoEncoder,
+            hardwareLabel
+        };
+        if (forceSoftware)
+        {
+            summaryParts.Add("fallback");
+        }
+
+        summaryParts.Add(toneMap ? "tone-map ON" : "tone-map OFF");
+        if (!string.IsNullOrEmpty(vf))
+        {
+            summaryParts.Add("vf=" + (vf.Length > 60 ? vf[..60] + "…" : vf));
+        }
+        else
+        {
+            summaryParts.Add("no filters");
+        }
+
+        summaryParts.Add("decode " + decodeMode);
+
+        return new EncodePlan
+        {
+            Action = action.ToString(),
+            VideoEncoder = videoEncoder,
+            HardwareLabel = hardwareLabel,
+            DecodeMode = decodeMode,
+            ToneMap = toneMap,
+            Filters = vf,
+            PixelFormat = pixelFormat,
+            SoftFallback = forceSoftware,
+            Summary = string.Join(" · ", summaryParts),
+            Args = sb.ToString()
+        };
+    }
+
+    /// <summary>Kept for callers/tests that only need the argument string.</summary>
+    public string BuildArgs(
+        string inputPath,
+        string outputPath,
+        EncodeAction action,
+        PluginConfiguration config,
+        string? videoRange = null,
+        bool forceSoftware = false)
+    {
+        return BuildEncodePlan(inputPath, outputPath, action, config, videoRange, forceSoftware).Args;
     }
 
     private string BuildVideoFilter(PluginConfiguration config, string? videoRange)
     {
         var filters = new List<string>();
-        // Only tone-map when the source is actually HDR (Pre-Transcode pattern).
+        // Tone-map only for known HDR/DV. Never invent tonemap for unknown/SDR — that forced
+        // soft filters and previously knocked QSV down to libx264 (CPU).
         if (config.ToneMapHdr && IsHdrRange(videoRange))
         {
-            filters.Add("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p");
-        }
-        else if (config.ToneMapHdr && string.IsNullOrWhiteSpace(videoRange))
-        {
-            // Unknown range + tone-map enabled: keep previous behavior for safety on HDR files.
             filters.Add("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p");
         }
 
@@ -457,14 +570,11 @@ public class FfmpegRunner
 
         var hw = ResolveHardware(config);
 
-        // Soft filters (zscale/tonemap/scale) + QSV/VAAPI encode fail with auto_scale/ENOSYS
-        // on many Intel/Synology builds. Prefer CPU encode; optional one-shot HW retry still exists.
-        if (hasSoftwareFilters
-            && (hw == HardwareAccelerationType.vaapi || hw == HardwareAccelerationType.qsv))
+        // VAAPI + soft filters still needs CPU encode (hwupload after tonemap is brittle).
+        // QSV: keep h264_qsv/hevc_qsv — soft decode + filters ending in format=nv12 works on Synology.
+        if (hasSoftwareFilters && hw == HardwareAccelerationType.vaapi)
         {
-            _logger.LogInformation(
-                "StreamReady using software encode because {Hw} + tone-map/scale filters are unreliable together",
-                hw);
+            _logger.LogInformation("StreamReady using software encode because VAAPI + tone-map/scale filters are unreliable together");
             return (hevc ? "libx265" : "libx264", extra);
         }
 

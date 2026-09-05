@@ -239,7 +239,7 @@ public class JobStore
         }
     }
 
-    public void UpdateProgress(string id, double progress)
+    public void UpdateProgress(string id, double progress, string? speed = null)
     {
         lock (_gate)
         {
@@ -250,6 +250,38 @@ public class JobStore
             }
 
             job.Progress = Math.Clamp(progress, 0, 100);
+            if (speed is not null)
+            {
+                job.Speed = speed;
+            }
+        }
+    }
+
+    public void UpdateEncodePlan(string id, EncodePlan plan)
+    {
+        lock (_gate)
+        {
+            var job = _state.Queue.FirstOrDefault(j => j.Id == id);
+            if (job is null)
+            {
+                return;
+            }
+
+            ApplyPlanToJob(job, plan);
+            SaveLocked();
+        }
+    }
+
+    private static void ApplyPlanToJob(EncodeJob job, EncodePlan plan)
+    {
+        job.StatusDetail = plan.Summary;
+        job.VideoEncoder = plan.VideoEncoder;
+        job.HardwarePath = plan.HardwareLabel + " · decode " + plan.DecodeMode;
+        job.ToneMap = plan.ToneMap;
+        job.Filters = plan.Filters;
+        if (plan.SoftFallback)
+        {
+            job.StatusDetail = "[software fallback] " + plan.Summary;
         }
     }
 
@@ -473,7 +505,13 @@ public class JobStore
             StartedAt = source.StartedAt,
             FinishedAt = source.FinishedAt,
             Reasons = [.. source.Reasons],
-            VideoRange = source.VideoRange
+            VideoRange = source.VideoRange,
+            StatusDetail = source.StatusDetail,
+            VideoEncoder = source.VideoEncoder,
+            HardwarePath = source.HardwarePath,
+            ToneMap = source.ToneMap,
+            Filters = source.Filters,
+            Speed = source.Speed
         };
     }
 }
