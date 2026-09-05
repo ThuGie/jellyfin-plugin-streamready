@@ -32,6 +32,8 @@ public class StreamReadyController : ControllerBase
     }
 
     [HttpGet("Configuration/configPage.css")]
+    [HttpGet("Configuration/stylesheet")]
+    [AllowAnonymous]
     public ActionResult GetCss()
     {
         var resource = typeof(Plugin).Namespace + ".Configuration.configPage.css";
@@ -41,10 +43,12 @@ public class StreamReadyController : ControllerBase
             return NotFound();
         }
 
-        return File(stream, "text/css");
+        Response.Headers.CacheControl = "no-cache";
+        return File(stream, "text/css; charset=utf-8");
     }
 
     [HttpGet("thumb.png")]
+    [AllowAnonymous]
     public ActionResult GetThumb()
     {
         var resource = typeof(Plugin).Namespace + ".thumb.png";

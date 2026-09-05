@@ -7,12 +7,58 @@
 <div id="StreamReadyPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-checkbox,emby-select,emby-button">
     <script>
         (function () {
-            var link = document.createElement('link');
-            link.rel = 'stylesheet';
-            link.href = ApiClient.getUrl('/StreamReady/Configuration/configPage.css');
-            document.head.appendChild(link);
+            if (document.getElementById('streamready-injected-css')) {
+                return;
+            }
+
+            function withToken(url) {
+                var token = ApiClient.accessToken && ApiClient.accessToken();
+                if (!token) {
+                    return url;
+                }
+                return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'api_key=' + encodeURIComponent(token);
+            }
+
+            function injectCss(css) {
+                if (!css || document.getElementById('streamready-injected-css')) {
+                    return;
+                }
+                var style = document.createElement('style');
+                style.id = 'streamready-injected-css';
+                style.textContent = css;
+                document.head.appendChild(style);
+                var critical = document.getElementById('streamready-critical');
+                if (critical) {
+                    critical.remove();
+                }
+            }
+
+            function linkFallback() {
+                if (document.getElementById('streamready-injected-css')) {
+                    return;
+                }
+                var link = document.createElement('link');
+                link.id = 'streamready-injected-css';
+                link.rel = 'stylesheet';
+                link.href = withToken(ApiClient.getUrl('web/ConfigurationPage', { name: 'StreamReadyCss' }));
+                document.head.appendChild(link);
+            }
+
+            var cssUrl = ApiClient.getUrl('StreamReady/Configuration/stylesheet');
+            if (ApiClient.get) {
+                ApiClient.get(cssUrl).then(injectCss).catch(linkFallback);
+            } else if (ApiClient.ajax) {
+                ApiClient.ajax({ url: cssUrl, type: 'GET', dataType: 'text' }).then(injectCss).catch(linkFallback);
+            } else {
+                linkFallback();
+            }
         })();
     </script>
+    <style id="streamready-critical">
+        #StreamReadyPage .jellyfin-tab-content { display: none; }
+        #StreamReadyPage .jellyfin-tab-content.active { display: block; }
+        #StreamReadyPage .sr-tab-bar { display: flex; flex-wrap: wrap; gap: 8px; }
+    </style>
     <div data-role="content">
         <div class="content-primary">
             <div class="sr-sticky-header" id="srStickyHeader">
@@ -318,7 +364,12 @@
             var visibleCandidates = [];
             var brandLogo = page.querySelector('.sr-brand-logo');
             if (brandLogo) {
-                brandLogo.src = ApiClient.getUrl('/StreamReady/thumb.png');
+                var logoUrl = ApiClient.getUrl('StreamReady/thumb.png');
+                var token = ApiClient.accessToken && ApiClient.accessToken();
+                if (token) {
+                    logoUrl += (logoUrl.indexOf('?') >= 0 ? '&' : '?') + 'api_key=' + encodeURIComponent(token);
+                }
+                brandLogo.src = logoUrl;
             }
 
             function api(path, method, body) {

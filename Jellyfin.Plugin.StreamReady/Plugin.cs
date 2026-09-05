@@ -26,21 +26,30 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 
     public static Plugin? Instance { get; private set; }
 
-    public IEnumerable<PluginPageInfo> GetPages()
-    {
-        return
-        [
-            new PluginPageInfo
-            {
-                Name = Name,
-                DisplayName = "StreamReady",
-                EnableInMainMenu = true,
-                MenuIcon = "movie",
-                EmbeddedResourcePath = string.Format(
-                    CultureInfo.InvariantCulture,
-                    "{0}.Configuration.configPage.html",
-                    GetType().Namespace)
-            }
-        ];
-    }
+        public IEnumerable<PluginPageInfo> GetPages()
+        {
+            var ns = GetType().Namespace;
+            return
+            [
+                new PluginPageInfo
+                {
+                    Name = Name,
+                    DisplayName = "StreamReady",
+                    EnableInMainMenu = true,
+                    MenuIcon = "movie",
+                    EmbeddedResourcePath = string.Format(
+                        CultureInfo.InvariantCulture,
+                        "{0}.Configuration.configPage.html",
+                        ns)
+                },
+                new PluginPageInfo
+                {
+                    Name = "StreamReadyCss",
+                    EmbeddedResourcePath = string.Format(
+                        CultureInfo.InvariantCulture,
+                        "{0}.Configuration.configPage.css",
+                        ns)
+                }
+            ];
+        }
 }

@@ -9,11 +9,19 @@
     --sr-text-subtle: rgba(255, 255, 255, 0.45);
     --sr-overlay: rgba(0, 0, 0, 0.28);
     --sr-overlay-hard: rgba(0, 0, 0, 0.55);
+    --sr-card-bg: color-mix(in srgb, var(--theme-body-bg, #101010) 70%, #1c1c1c);
     --sr-card-gradient: linear-gradient(145deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%);
     --sr-legend-gradient: linear-gradient(to left, color-mix(in srgb, var(--primary-accent-color, #00a4dc) 22%, transparent) 0%, rgba(255, 255, 255, 0.02) 100%);
     --sr-link: color-mix(in srgb, var(--primary-accent-color, #00a4dc) 65%, #fff);
     color: inherit;
     font-family: inherit;
+    box-sizing: border-box;
+}
+
+#StreamReadyPage *,
+#StreamReadyPage *::before,
+#StreamReadyPage *::after {
+    box-sizing: border-box;
 }
 
 #StreamReadyPage.sr-light-theme {
@@ -27,6 +35,7 @@
     --sr-text-subtle: rgba(0, 0, 0, 0.5);
     --sr-overlay: rgba(0, 0, 0, 0.1);
     --sr-overlay-hard: rgba(0, 0, 0, 0.35);
+    --sr-card-bg: rgba(255, 255, 255, 0.78);
     --sr-card-gradient: linear-gradient(145deg, rgba(0, 0, 0, 0.03) 0%, rgba(0, 0, 0, 0.01) 100%);
     --sr-legend-gradient: linear-gradient(to left, color-mix(in srgb, var(--primary-accent-color, #00a4dc) 18%, transparent) 0%, rgba(0, 0, 0, 0.01) 100%);
     --sr-link: color-mix(in srgb, var(--primary-accent-color, #00a4dc) 75%, #000);
@@ -136,7 +145,8 @@
 
 .sr-tab-bar {
     display: flex;
-    gap: 10px;
+    flex-wrap: wrap;
+    gap: 8px;
     padding: 12px 0;
     border-bottom: 1px solid var(--sr-border);
     overflow-x: auto;
@@ -145,37 +155,57 @@
 
 .sr-tab-bar::-webkit-scrollbar { display: none; }
 
+#StreamReadyPage button.jellyfin-tab-button,
 #StreamReadyPage .jellyfin-tab-button {
-    background: var(--sr-surface-2);
-    border: 1px solid var(--sr-border);
-    border-radius: 30px;
-    padding: 10px 20px;
-    color: inherit;
+    appearance: none !important;
+    -webkit-appearance: none !important;
+    background: var(--sr-surface-2) !important;
+    background-image: none !important;
+    border: 1px solid var(--sr-border) !important;
+    border-radius: 30px !important;
+    padding: 8px 16px !important;
+    color: inherit !important;
     cursor: pointer;
     font-weight: 600;
     font-size: 0.9em;
-    display: flex;
+    display: inline-flex !important;
     align-items: center;
     gap: 8px;
     transition: all 0.2s ease;
     white-space: nowrap;
+    min-width: 0;
+    box-shadow: none !important;
+    text-transform: none !important;
 }
 
 #StreamReadyPage .jellyfin-tab-button h3 {
-    margin: 0;
-    font-size: 1em;
-    font-weight: inherit;
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: 0.95em !important;
+    font-weight: 600 !important;
+    line-height: 1.2 !important;
     display: inline-flex;
     align-items: center;
     gap: 8px;
     pointer-events: none;
+    color: inherit !important;
+}
+
+#StreamReadyPage .jellyfin-tab-button .material-icons {
+    font-size: 18px !important;
+    width: 18px;
+    height: 18px;
+}
+
+#StreamReadyPage .jellyfin-tab-button:hover {
+    background: var(--sr-surface-3) !important;
 }
 
 #StreamReadyPage .jellyfin-tab-button.active {
-    background: var(--primary-accent-color, #00a4dc);
-    border-color: var(--primary-accent-color, #00a4dc);
+    background: var(--primary-accent-color, #00a4dc) !important;
+    border-color: var(--primary-accent-color, #00a4dc) !important;
     color: #fff !important;
-    box-shadow: 0 4px 12px color-mix(in srgb, var(--primary-accent-color, #00a4dc) 30%, transparent);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--primary-accent-color, #00a4dc) 30%, transparent) !important;
 }
 
 #StreamReadyPage .jellyfin-tab-content {
@@ -185,19 +215,20 @@
 
 #StreamReadyPage .jellyfin-tab-content.active {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
     gap: 20px;
     align-items: start;
 }
 
 #StreamReadyForm fieldset {
-    background: rgba(22, 22, 22, 0.94);
-    border: 1px solid var(--sr-border);
+    background: var(--sr-card-bg, var(--sr-surface-1));
+    border: 1px solid var(--sr-border) !important;
     border-radius: 12px;
-    padding: 0;
+    padding: 0 !important;
     margin: 0;
-    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.22);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.18);
     overflow: hidden;
+    min-width: 0;
 }
 
 #StreamReadyPage.sr-light-theme #StreamReadyForm fieldset {
@@ -404,16 +435,16 @@
 
 .sr-save-dock {
     position: fixed;
-    bottom: 30px;
+    bottom: 24px;
     left: 50%;
     transform: translateX(-50%);
     display: flex;
     align-items: center;
     gap: 10px;
-    background: rgba(25, 25, 25, 0.9);
+    background: var(--sr-overlay-hard);
     backdrop-filter: blur(16px);
     border: 1px solid var(--sr-border);
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
     border-radius: 50px;
     padding: 10px 16px;
     z-index: 2000;
