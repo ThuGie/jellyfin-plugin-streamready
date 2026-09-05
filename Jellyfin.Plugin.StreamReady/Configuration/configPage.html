@@ -49,7 +49,7 @@
             </div>
 
             <form id="StreamReadyForm">
-                <div id="overview" class="jellyfin-tab-content active">
+                <div id="overview" class="jellyfin-tab-content active" data-tab="overview">
                     <div class="sr-info-banner sr-fieldset-wide">
                         <i class="material-icons sr-info-icon">info</i>
                         <div>StreamReady finds movies and episodes that are too large or incompatible for Direct Play, then pre-encodes them. <strong>Manual mode is the default</strong>: scan first, review the list, then encode one file or a selection. Enable Auto Direct Pre-Transcode only if you want matching files queued automatically.</div>
@@ -73,7 +73,7 @@
                         <legend class="sectionTitle"><i class="material-icons sr-legend-icon">bolt</i>Quick actions</legend>
                         <div class="configSection">
                             <div class="sr-quick-actions-grid">
-                                <button type="button" class="sr-quick-action" id="srScanNow"><i class="material-icons sr-quick-action-icon">search</i><span class="sr-quick-action-text"><span class="sr-quick-action-title">Scan now</span><span class="sr-quick-action-detail">Find files that need encoding</span></span></button>
+                                <button type="button" class="sr-quick-action sr-scan-now" id="srScanNow"><i class="material-icons sr-quick-action-icon">search</i><span class="sr-quick-action-text"><span class="sr-quick-action-title">Scan now</span><span class="sr-quick-action-detail">Find files that need encoding</span></span></button>
                                 <button type="button" class="sr-quick-action" id="srPauseWorker"><i class="material-icons sr-quick-action-icon">pause</i><span class="sr-quick-action-text"><span class="sr-quick-action-title">Pause encoder</span><span class="sr-quick-action-detail">Keep queued jobs waiting</span></span></button>
                                 <button type="button" class="sr-quick-action" id="srResumeWorker"><i class="material-icons sr-quick-action-icon">play_arrow</i><span class="sr-quick-action-text"><span class="sr-quick-action-title">Resume encoder</span><span class="sr-quick-action-detail">Continue the encode queue</span></span></button>
                             </div>
@@ -81,15 +81,19 @@
                     </fieldset>
                 </div>
 
-                <div id="needs" class="jellyfin-tab-content">
+                <div id="needs" class="jellyfin-tab-content" data-tab="needs">
                     <div class="sr-info-banner">
                         <i class="material-icons sr-info-icon">playlist_add_check</i>
-                        <div>Review files that failed compatibility or size rules. Encode one row, or select several and queue them. Nothing is rewritten until you press Encode (unless Auto is on).</div>
+                        <div>Scan your selected libraries, then encode one row or a selection. Nothing is rewritten until you press Encode (unless Auto is on).</div>
                     </div>
                     <fieldset class="sr-fieldset-wide">
                         <legend class="sectionTitle"><i class="material-icons sr-legend-icon">filter_list</i>Needs encoding</legend>
                         <div class="configSection">
                             <div class="sr-toolbar">
+                                <button type="button" class="raised button-submit emby-button sr-scan-now" id="srScanNeeds">
+                                    <i class="material-icons" aria-hidden="true">search</i>
+                                    Scan now
+                                </button>
                                 <select is="emby-select" id="srFilterType">
                                     <option value="">All types</option>
                                     <option value="Movie">Movies</option>
@@ -112,7 +116,7 @@
                     </fieldset>
                 </div>
 
-                <div id="queue" class="jellyfin-tab-content">
+                <div id="queue" class="jellyfin-tab-content" data-tab="queue">
                     <div class="sr-info-banner">
                         <i class="material-icons sr-info-icon">queue</i>
                         <div>Only jobs that were queued (manually or by Auto) appear here. The worker encodes one file at a time.</div>
@@ -125,7 +129,7 @@
                     </fieldset>
                 </div>
 
-                <div id="compatibility" class="jellyfin-tab-content">
+                <div id="compatibility" class="jellyfin-tab-content" data-tab="compatibility">
                     <div class="sr-info-banner">
                         <i class="material-icons sr-info-icon">rule</i>
                         <div>A file is listed when any enabled rule fails. Defaults match typical Direct Play: MP4, H.264, AAC/AC3, SDR, under 25 GiB / 25 Mbps.</div>
@@ -172,7 +176,7 @@
                     </fieldset>
                 </div>
 
-                <div id="encoding" class="jellyfin-tab-content">
+                <div id="encoding" class="jellyfin-tab-content" data-tab="encoding">
                     <fieldset>
                         <legend class="sectionTitle"><i class="material-icons sr-legend-icon">high_quality</i>Output preset</legend>
                         <div class="configSection">
@@ -232,7 +236,7 @@
                     </fieldset>
                 </div>
 
-                <div id="libraries" class="jellyfin-tab-content">
+                <div id="libraries" class="jellyfin-tab-content" data-tab="libraries">
                     <div class="sr-note-banner">
                         <i class="material-icons sr-info-icon">warning_amber</i>
                         <div>Select at least one movie or TV library. StreamReady stays idle until libraries are saved.</div>
@@ -246,7 +250,7 @@
                     </fieldset>
                 </div>
 
-                <div id="replacement" class="jellyfin-tab-content">
+                <div id="replacement" class="jellyfin-tab-content" data-tab="replacement">
                     <div class="sr-note-banner">
                         <i class="material-icons sr-info-icon">warning_amber</i>
                         <div>Rewriting files on disk can confuse Radarr/Sonarr quality profiles. Backup mode is the recommended default.</div>
@@ -275,7 +279,7 @@
                     </fieldset>
                 </div>
 
-                <div id="schedule" class="jellyfin-tab-content">
+                <div id="schedule" class="jellyfin-tab-content" data-tab="schedule">
                     <fieldset>
                         <legend class="sectionTitle"><i class="material-icons sr-legend-icon">schedule</i>When to scan</legend>
                         <div class="configSection">
@@ -293,7 +297,7 @@
                     </fieldset>
                 </div>
 
-                <div id="docs" class="jellyfin-tab-content">
+                <div id="docs" class="jellyfin-tab-content" data-tab="docs">
                     <fieldset class="sr-fieldset-wide">
                         <legend class="sectionTitle"><i class="material-icons sr-legend-icon">menu_book</i>How StreamReady works</legend>
                         <div class="configSection sr-docs">
@@ -322,12 +326,17 @@
     <script>
         (function () {
             var pluginId = '9d2e8c4a-1f6b-4a73-b8e0-5c9f3a7d2e11';
-            var page = document.querySelector('#StreamReadyPage');
             var pollTimer = null;
             var visibleCandidates = [];
-            var brandLogo = page.querySelector('.sr-brand-logo');
-            if (brandLogo) {
-                brandLogo.src = ApiClient.getUrl('/StreamReady/thumb.png');
+            var scanning = false;
+
+            function getPage() {
+                return document.getElementById('StreamReadyPage');
+            }
+
+            function val(id) {
+                var page = getPage();
+                return page ? page.querySelector('#' + id) : null;
             }
 
             function api(path, method, body) {
@@ -344,6 +353,7 @@
             }
 
             function detectTheme() {
+                var page = getPage();
                 if (!page) return;
                 try {
                     var bg = getComputedStyle(document.documentElement).backgroundColor;
@@ -362,58 +372,86 @@
                     page.classList.add('sr-dark-theme');
                 }
             }
-            detectTheme();
-            window.addEventListener('load', detectTheme);
-            setTimeout(detectTheme, 600);
 
-            (function wireTabBarDrag() {
-                var bar = page.querySelector('.sr-tab-bar');
-                if (!bar) return;
+            function setBrandLogo() {
+                var page = getPage();
+                var brandLogo = page && page.querySelector('.sr-brand-logo');
+                if (brandLogo && !brandLogo.getAttribute('src')) {
+                    brandLogo.src = ApiClient.getUrl('/StreamReady/thumb.png');
+                }
+            }
+
+            function wireTabBarDrag() {
+                var page = getPage();
+                var bar = page && page.querySelector('.sr-tab-bar');
+                if (!bar || bar.dataset.srDragBound === '1') return;
+                bar.dataset.srDragBound = '1';
                 var isDown = false;
                 var startX = 0;
                 var startScroll = 0;
                 var dragged = false;
+
                 function updateScrollFade() {
                     var maxScroll = bar.scrollWidth - bar.clientWidth;
                     bar.classList.toggle('sr-scroll-fade-left', bar.scrollLeft > 1);
                     bar.classList.toggle('sr-scroll-fade-right', bar.scrollLeft < maxScroll - 1);
                 }
+
                 bar.addEventListener('mousedown', function (e) {
+                    if (e.button !== 0) return;
                     isDown = true;
                     dragged = false;
                     startX = e.pageX;
                     startScroll = bar.scrollLeft;
-                    bar.classList.add('sr-dragging');
                 });
-                window.addEventListener('mousemove', function (e) {
+                bar.addEventListener('mousemove', function (e) {
                     if (!isDown) return;
                     var dx = e.pageX - startX;
-                    if (Math.abs(dx) > 5) dragged = true;
-                    bar.scrollLeft = startScroll - dx;
+                    if (!dragged && Math.abs(dx) > 5) {
+                        dragged = true;
+                        bar.classList.add('sr-dragging');
+                    }
+                    if (dragged) {
+                        bar.scrollLeft = startScroll - dx;
+                        e.preventDefault();
+                    }
                     updateScrollFade();
                 });
-                window.addEventListener('mouseup', function () {
+                function endDrag() {
+                    if (!isDown) return;
                     isDown = false;
                     bar.classList.remove('sr-dragging');
-                });
+                }
+                bar.addEventListener('mouseup', endDrag);
+                bar.addEventListener('mouseleave', endDrag);
+                bar.addEventListener('click', function (e) {
+                    if (dragged) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        dragged = false;
+                    }
+                }, true);
                 bar.addEventListener('scroll', updateScrollFade, { passive: true });
                 updateScrollFade();
-            })();
+            }
 
             function showTab(id) {
+                var page = getPage();
+                if (!page || !id) return;
                 page.querySelectorAll('.jellyfin-tab-button').forEach(function (btn) {
                     btn.classList.toggle('active', btn.getAttribute('data-tab') === id);
                 });
                 page.querySelectorAll('.jellyfin-tab-content').forEach(function (el) {
-                    el.classList.toggle('active', el.id === id);
+                    var match = el.getAttribute('data-tab') === id || el.id === id;
+                    el.classList.toggle('active', match);
                 });
                 if (id === 'needs') loadCandidates();
                 if (id === 'queue') loadQueue();
             }
 
-            function val(id) { return page.querySelector('#' + id); }
-
             function loadConfig() {
+                var page = getPage();
+                if (!page) return;
                 Dashboard.showLoadingMsg();
                 Promise.all([
                     ApiClient.getPluginConfiguration(pluginId),
@@ -459,29 +497,33 @@
             }
 
             function selectedLibraries() {
+                var page = getPage();
+                if (!page) return '';
                 return Array.prototype.slice.call(page.querySelectorAll('.sr-lib:checked')).map(function (el) {
                     return el.getAttribute('data-id');
                 }).join(',');
             }
 
             function saveConfig(e) {
-                e.preventDefault();
+                if (e) e.preventDefault();
                 Dashboard.showLoadingMsg();
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                     ['Enabled', 'AutoDirectPreTranscode', 'IncludeExtras', 'ToneMapHdr', 'VerifyBeforeReplace', 'PauseDuringPlayback'].forEach(function (id) {
-                        config[id] = !!val(id).checked;
+                        var el = val(id);
+                        if (el) config[id] = !!el.checked;
                     });
                     ['AllowedContainers', 'AllowedVideoCodecs', 'AllowedAudioCodecs', 'AllowedVideoRanges', 'EncodingPreset', 'HardwareAccel', 'ReplacementPolicy', 'BackupFolder', 'FfmpegPreset'].forEach(function (id) {
-                        config[id] = val(id).value;
+                        var el = val(id);
+                        if (el) config[id] = el.value;
                     });
-                    config.MaxFileSizeGiB = parseFloat(val('MaxFileSizeGiB').value) || 0;
-                    config.MaxVideoBitrateMbps = parseFloat(val('MaxVideoBitrateMbps').value) || 0;
-                    config.Crf = parseInt(val('Crf').value, 10) || 0;
-                    config.ResolutionCap = parseInt(val('ResolutionCap').value, 10) || 0;
-                    config.AudioChannels = parseInt(val('AudioChannels').value, 10) || 0;
-                    config.BackupRetentionDays = parseInt(val('BackupRetentionDays').value, 10) || 0;
-                    config.ScanIntervalHours = parseInt(val('ScanIntervalHours').value, 10) || 0;
-                    config.MaxConcurrentJobs = parseInt(val('MaxConcurrentJobs').value, 10) || 1;
+                    config.MaxFileSizeGiB = parseFloat((val('MaxFileSizeGiB') || {}).value) || 0;
+                    config.MaxVideoBitrateMbps = parseFloat((val('MaxVideoBitrateMbps') || {}).value) || 0;
+                    config.Crf = parseInt((val('Crf') || {}).value, 10) || 0;
+                    config.ResolutionCap = parseInt((val('ResolutionCap') || {}).value, 10) || 0;
+                    config.AudioChannels = parseInt((val('AudioChannels') || {}).value, 10) || 0;
+                    config.BackupRetentionDays = parseInt((val('BackupRetentionDays') || {}).value, 10) || 0;
+                    config.ScanIntervalHours = parseInt((val('ScanIntervalHours') || {}).value, 10) || 0;
+                    config.MaxConcurrentJobs = parseInt((val('MaxConcurrentJobs') || {}).value, 10) || 1;
                     config.SelectedLibraryIds = selectedLibraries();
                     ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
                         clearDirty();
@@ -496,24 +538,27 @@
                     var grid = val('srStatusGrid');
                     if (!grid) return;
                     var cards = [
-                        card(s.ffmpegReady ? 'ok' : 'warn', 'movie_filter', 'FFmpeg', s.ffmpegReady ? s.ffmpegPath : 'Not found'),
-                        card(s.autoDirectPreTranscode ? 'warn' : 'ok', 'tune', 'Mode', s.autoDirectPreTranscode ? 'Auto Direct Pre-Transcode' : 'Manual'),
-                        card(s.configured ? 'ok' : 'warn', 'video_library', 'Libraries', s.configured ? 'Selected' : 'Select libraries to begin'),
-                        card('ok', 'playlist_add_check', 'Needs encoding', String(s.candidateCount || 0)),
-                        card(s.runningCount ? 'warn' : 'ok', 'queue', 'Queue', (s.queuedCount || 0) + ' waiting, ' + (s.runningCount || 0) + ' running'),
-                        card(s.paused ? 'warn' : 'ok', s.paused ? 'pause' : 'play_arrow', 'Worker', s.paused ? 'Paused' : (s.currentJob ? (s.currentJob.Name + ' — ' + Math.round(s.currentJob.Progress) + '%') : 'Idle'))
+                        card(s.ffmpegReady ? 'ok' : 'warn', 'movie_filter', 'FFmpeg', s.ffmpegReady ? s.ffmpegPath : 'Not found', null),
+                        card(s.autoDirectPreTranscode ? 'warn' : 'ok', 'tune', 'Mode', s.autoDirectPreTranscode ? 'Auto Direct Pre-Transcode' : 'Manual', null),
+                        card(s.configured ? 'ok' : 'warn', 'video_library', 'Libraries', s.configured ? 'Selected' : 'Select libraries to begin', 'libraries'),
+                        card('ok', 'playlist_add_check', 'Needs encoding', String(s.candidateCount || 0), 'needs'),
+                        card(s.runningCount ? 'warn' : 'ok', 'queue', 'Queue', (s.queuedCount || 0) + ' waiting, ' + (s.runningCount || 0) + ' running', 'queue'),
+                        card(s.paused ? 'warn' : 'ok', s.paused ? 'pause' : 'play_arrow', 'Worker', s.paused ? 'Paused' : (s.currentJob ? (s.currentJob.Name + ' — ' + Math.round(s.currentJob.Progress) + '%') : 'Idle'), 'queue')
                     ];
                     grid.innerHTML = cards.join('');
                 }).catch(function () {});
             }
 
-            function card(state, icon, name, detail) {
-                return '<div class="sr-service-card sr-state-' + state + '"><i class="material-icons sr-service-icon">' + icon + '</i><div class="sr-service-body"><div class="sr-service-name">' + escapeHtml(name) + '</div><div class="sr-service-detail">' + escapeHtml(detail || '') + '</div></div></div>';
+            function card(state, icon, name, detail, tab) {
+                var jump = tab ? ' data-sr-tab="' + tab + '"' : '';
+                return '<button type="button" class="sr-service-card sr-state-' + state + '"' + jump + '><i class="material-icons sr-service-icon">' + icon + '</i><div class="sr-service-body"><div class="sr-service-name">' + escapeHtml(name) + '</div><div class="sr-service-detail">' + escapeHtml(detail || '') + '</div></div></button>';
             }
 
             function loadCandidates() {
-                var type = val('srFilterType').value;
-                var reason = val('srFilterReason').value;
+                var typeEl = val('srFilterType');
+                var reasonEl = val('srFilterReason');
+                var type = typeEl ? typeEl.value : '';
+                var reason = reasonEl ? reasonEl.value : '';
                 var q = [];
                 if (type) q.push('itemType=' + encodeURIComponent(type));
                 if (reason) q.push('reason=' + encodeURIComponent(reason));
@@ -521,14 +566,16 @@
                     visibleCandidates = rows || [];
                     renderCandidates(visibleCandidates);
                 }).catch(function () {
-                    val('srCandidates').innerHTML = '<div class="sr-empty">Could not load candidates.</div>';
+                    var host = val('srCandidates');
+                    if (host) host.innerHTML = '<div class="sr-empty">Could not load candidates.</div>';
                 });
             }
 
             function renderCandidates(rows) {
                 var host = val('srCandidates');
+                if (!host) return;
                 if (!rows.length) {
-                    host.innerHTML = '<div class="sr-empty">Nothing needs encoding. Run a scan after saving libraries and compatibility rules.</div>';
+                    host.innerHTML = '<div class="sr-empty"><p>Nothing needs encoding yet.</p><p>Save your libraries, then scan. Matches show up here so you can encode one file or a selection.</p><button type="button" class="raised button-submit emby-button sr-scan-now">Scan now</button></div>';
                     return;
                 }
                 var html = '<table class="sr-table"><thead><tr><th></th><th>Title</th><th>Why</th><th>Plan</th><th>Size</th><th></th></tr></thead><tbody>';
@@ -548,9 +595,10 @@
             function loadQueue() {
                 api('/queue').then(function (rows) {
                     var host = val('srQueue');
+                    if (!host) return;
                     rows = rows || [];
                     if (!rows.length) {
-                        host.innerHTML = '<div class="sr-empty">Queue is empty. Encode files from Needs Encoding, or turn on Auto Direct Pre-Transcode.</div>';
+                        host.innerHTML = '<div class="sr-empty">Queue is empty. Scan from Needs Encoding, then encode files, or turn on Auto Direct Pre-Transcode.</div>';
                         return;
                     }
                     var html = '<table class="sr-table"><thead><tr><th>Title</th><th>Status</th><th>Progress</th><th></th></tr></thead><tbody>';
@@ -576,6 +624,8 @@
             }
 
             function pickedIds() {
+                var page = getPage();
+                if (!page) return [];
                 return Array.prototype.slice.call(page.querySelectorAll('.sr-pick:checked')).map(function (el) {
                     return el.getAttribute('data-id');
                 });
@@ -587,61 +637,37 @@
                 });
             }
 
-            page.querySelectorAll('.jellyfin-tab-button').forEach(function (btn) {
-                btn.addEventListener('click', function () { showTab(btn.getAttribute('data-tab')); });
-            });
-            val('StreamReadyForm').addEventListener('submit', saveConfig);
-            val('srScanNow').addEventListener('click', function () {
+            function scanNow() {
+                if (scanning) return;
+                scanning = true;
                 Dashboard.showLoadingMsg();
                 api('/scan', 'POST').then(function (r) {
+                    scanning = false;
                     Dashboard.hideLoadingMsg();
                     Dashboard.alert('Scan complete. ' + (r.found || 0) + ' file(s) need encoding.');
                     refreshStatus();
-                    loadCandidates();
                     showTab('needs');
+                    loadCandidates();
                 }).catch(function () {
+                    scanning = false;
                     Dashboard.hideLoadingMsg();
-                    Dashboard.alert('Scan failed. Save libraries first.');
+                    Dashboard.alert('Scan failed. Save at least one library first.');
                 });
-            });
-            val('srPauseWorker').addEventListener('click', function () { api('/worker/pause', 'POST').then(refreshStatus); });
-            val('srResumeWorker').addEventListener('click', function () { api('/worker/resume', 'POST').then(refreshStatus); });
-            val('srFilterType').addEventListener('change', loadCandidates);
-            val('srFilterReason').addEventListener('change', loadCandidates);
-            val('srEncodeSelected').addEventListener('click', function () {
-                var ids = pickedIds();
-                if (!ids.length) { Dashboard.alert('Select at least one file.'); return; }
-                api('/candidates/encode', 'POST', { Ids: ids }).then(function (r) {
-                    Dashboard.alert('Queued ' + (r.queued || ids.length) + ' file(s).');
-                    showTab('queue');
-                    loadQueue();
-                });
-            });
-            val('srEncodeVisible').addEventListener('click', function () {
-                var ids = visibleCandidates.map(function (c) { return c.id; });
-                if (!ids.length) { Dashboard.alert('Nothing visible to encode.'); return; }
-                api('/candidates/encode', 'POST', { Ids: ids }).then(function (r) {
-                    Dashboard.alert('Queued ' + (r.queued || ids.length) + ' file(s).');
-                    showTab('queue');
-                    loadQueue();
-                });
-            });
-            page.addEventListener('click', function (ev) {
-                var encode = ev.target.closest('.sr-encode-one');
-                var ignore = ev.target.closest('.sr-ignore-one');
-                var cancel = ev.target.closest('.sr-cancel');
-                var retry = ev.target.closest('.sr-retry');
-                var skip = ev.target.closest('.sr-skip');
-                if (encode) api('/candidates/' + encode.getAttribute('data-id') + '/encode', 'POST').then(function () { showTab('queue'); loadQueue(); });
-                if (ignore) api('/candidates/' + ignore.getAttribute('data-id') + '/ignore', 'POST').then(loadCandidates);
-                if (cancel) api('/queue/' + cancel.getAttribute('data-id') + '/cancel', 'POST').then(loadQueue);
-                if (retry) api('/queue/' + retry.getAttribute('data-id') + '/retry', 'POST').then(loadQueue);
-                if (skip) api('/queue/' + skip.getAttribute('data-id') + '/skip', 'POST').then(loadQueue);
-            });
-            var descToggleBtn = document.getElementById('toggleDescriptionsBtn');
-            var descPrefKey = 'sr-settings-descriptions-visible';
+            }
+
+            function markDirty() {
+                var saveDock = getPage() && getPage().querySelector('.sr-save-dock');
+                if (saveDock) saveDock.classList.add('sr-dirty');
+            }
+
+            function clearDirty() {
+                var saveDock = getPage() && getPage().querySelector('.sr-save-dock');
+                if (saveDock) saveDock.classList.remove('sr-dirty');
+            }
+
             function applyDescriptionVisibility(show) {
                 try { document.body.classList.toggle('sr-hide-descriptions', !show); } catch (e) {}
+                var descToggleBtn = val('toggleDescriptionsBtn');
                 if (descToggleBtn) {
                     descToggleBtn.setAttribute('aria-pressed', show ? 'true' : 'false');
                     descToggleBtn.classList.toggle('sr-desc-toggle-off', !show);
@@ -649,28 +675,16 @@
                     if (state) state.textContent = show ? 'On' : 'Off';
                 }
             }
-            (function initDescriptionVisibility() {
-                var show = true;
-                try {
-                    if (localStorage.getItem(descPrefKey) === 'false') show = false;
-                } catch (e) {}
-                applyDescriptionVisibility(show);
-            })();
-            if (descToggleBtn) {
-                descToggleBtn.addEventListener('click', function () {
-                    var currentlyShown = !document.body.classList.contains('sr-hide-descriptions');
-                    var nextShown = !currentlyShown;
-                    applyDescriptionVisibility(nextShown);
-                    try { localStorage.setItem(descPrefKey, nextShown ? 'true' : 'false'); } catch (e) {}
-                });
-            }
 
-            var searchInput = document.getElementById('settingsSearchInput');
-            var searchClear = document.getElementById('settingsSearchClear');
-            var searchCount = document.getElementById('settingsSearchCount');
             function runSearch() {
+                var page = getPage();
+                var searchInput = val('settingsSearchInput');
+                var searchClear = val('settingsSearchClear');
+                var searchCount = val('settingsSearchCount');
+                var form = val('StreamReadyForm');
+                if (!page || !form) return;
                 var q = (searchInput && searchInput.value || '').trim().toLowerCase();
-                var fieldsets = page.querySelectorAll('#StreamReadyForm fieldset');
+                var fieldsets = form.querySelectorAll('fieldset');
                 var visible = 0;
                 fieldsets.forEach(function (fs) {
                     var match = !q || fs.textContent.toLowerCase().indexOf(q) >= 0;
@@ -682,42 +696,163 @@
                     searchCount.style.display = q ? 'block' : 'none';
                 }
                 if (searchClear) searchClear.classList.toggle('show', !!q);
-                page.querySelector('#StreamReadyForm').classList.toggle('sr-search-mode', !!q);
+                form.classList.toggle('sr-search-mode', !!q);
             }
-            if (searchInput) searchInput.addEventListener('input', runSearch);
-            if (searchClear) {
-                searchClear.addEventListener('click', function () {
-                    searchInput.value = '';
-                    runSearch();
-                    searchInput.focus();
-                });
-            }
-
-            var saveDock = page.querySelector('.sr-save-dock');
-            function markDirty() { if (saveDock) saveDock.classList.add('sr-dirty'); }
-            function clearDirty() { if (saveDock) saveDock.classList.remove('sr-dirty'); }
-            val('StreamReadyForm').addEventListener('input', markDirty);
-            val('StreamReadyForm').addEventListener('change', markDirty);
-            window.addEventListener('scroll', function () {
-                val('srStickyHeader').classList.toggle('sr-is-scrolled', window.scrollY > 8);
-            }, { passive: true });
 
             function onShow() {
+                setBrandLogo();
+                wireTabBarDrag();
                 detectTheme();
                 loadConfig();
                 if (pollTimer) clearInterval(pollTimer);
                 pollTimer = setInterval(function () {
                     refreshStatus();
-                    var active = page.querySelector('.jellyfin-tab-content.active');
-                    if (active && active.id === 'queue') loadQueue();
-                    if (active && active.id === 'needs') loadCandidates();
+                    var page = getPage();
+                    var active = page && page.querySelector('.jellyfin-tab-content.active');
+                    var tab = active && (active.getAttribute('data-tab') || active.id);
+                    if (tab === 'queue') loadQueue();
+                    if (tab === 'needs') loadCandidates();
                 }, 4000);
             }
 
-            page.addEventListener('pageshow', onShow);
-            page.addEventListener('viewshow', onShow);
+            if (!window.__streamReadyUiBound) {
+                window.__streamReadyUiBound = true;
+
+                document.addEventListener('click', function (ev) {
+                    var page = ev.target.closest && ev.target.closest('#StreamReadyPage');
+                    if (!page) return;
+
+                    var tabBtn = ev.target.closest('.jellyfin-tab-button');
+                    if (tabBtn && page.contains(tabBtn)) {
+                        ev.preventDefault();
+                        showTab(tabBtn.getAttribute('data-tab'));
+                        return;
+                    }
+
+                    if (ev.target.closest('.sr-scan-now')) {
+                        ev.preventDefault();
+                        scanNow();
+                        return;
+                    }
+
+                    var jump = ev.target.closest('[data-sr-tab]');
+                    if (jump && page.contains(jump)) {
+                        ev.preventDefault();
+                        showTab(jump.getAttribute('data-sr-tab'));
+                        return;
+                    }
+
+                    if (ev.target.closest('#srPauseWorker')) {
+                        ev.preventDefault();
+                        api('/worker/pause', 'POST').then(refreshStatus);
+                        return;
+                    }
+                    if (ev.target.closest('#srResumeWorker')) {
+                        ev.preventDefault();
+                        api('/worker/resume', 'POST').then(refreshStatus);
+                        return;
+                    }
+                    if (ev.target.closest('#srEncodeSelected')) {
+                        ev.preventDefault();
+                        var ids = pickedIds();
+                        if (!ids.length) { Dashboard.alert('Select at least one file.'); return; }
+                        api('/candidates/encode', 'POST', { Ids: ids }).then(function (r) {
+                            Dashboard.alert('Queued ' + (r.queued || ids.length) + ' file(s).');
+                            showTab('queue');
+                            loadQueue();
+                        });
+                        return;
+                    }
+                    if (ev.target.closest('#srEncodeVisible')) {
+                        ev.preventDefault();
+                        var allIds = visibleCandidates.map(function (c) { return c.id; });
+                        if (!allIds.length) { Dashboard.alert('Nothing visible to encode.'); return; }
+                        api('/candidates/encode', 'POST', { Ids: allIds }).then(function (r) {
+                            Dashboard.alert('Queued ' + (r.queued || allIds.length) + ' file(s).');
+                            showTab('queue');
+                            loadQueue();
+                        });
+                        return;
+                    }
+                    if (ev.target.closest('#toggleDescriptionsBtn')) {
+                        var currentlyShown = !document.body.classList.contains('sr-hide-descriptions');
+                        var nextShown = !currentlyShown;
+                        applyDescriptionVisibility(nextShown);
+                        try { localStorage.setItem('sr-settings-descriptions-visible', nextShown ? 'true' : 'false'); } catch (e) {}
+                        return;
+                    }
+                    if (ev.target.closest('#settingsSearchClear')) {
+                        var searchInput = val('settingsSearchInput');
+                        if (searchInput) {
+                            searchInput.value = '';
+                            runSearch();
+                            searchInput.focus();
+                        }
+                        return;
+                    }
+
+                    var encode = ev.target.closest('.sr-encode-one');
+                    var ignore = ev.target.closest('.sr-ignore-one');
+                    var cancel = ev.target.closest('.sr-cancel');
+                    var retry = ev.target.closest('.sr-retry');
+                    var skip = ev.target.closest('.sr-skip');
+                    if (encode) api('/candidates/' + encode.getAttribute('data-id') + '/encode', 'POST').then(function () { showTab('queue'); loadQueue(); });
+                    if (ignore) api('/candidates/' + ignore.getAttribute('data-id') + '/ignore', 'POST').then(loadCandidates);
+                    if (cancel) api('/queue/' + cancel.getAttribute('data-id') + '/cancel', 'POST').then(loadQueue);
+                    if (retry) api('/queue/' + retry.getAttribute('data-id') + '/retry', 'POST').then(loadQueue);
+                    if (skip) api('/queue/' + skip.getAttribute('data-id') + '/skip', 'POST').then(loadQueue);
+                });
+
+                document.addEventListener('submit', function (ev) {
+                    var form = ev.target.closest && ev.target.closest('#StreamReadyForm');
+                    if (!form) return;
+                    saveConfig(ev);
+                });
+
+                document.addEventListener('input', function (ev) {
+                    var page = ev.target.closest && ev.target.closest('#StreamReadyPage');
+                    if (!page) return;
+                    if (ev.target.id === 'settingsSearchInput') runSearch();
+                    if (ev.target.closest('#StreamReadyForm')) markDirty();
+                });
+
+                document.addEventListener('change', function (ev) {
+                    var page = ev.target.closest && ev.target.closest('#StreamReadyPage');
+                    if (!page) return;
+                    if (ev.target.id === 'srFilterType' || ev.target.id === 'srFilterReason') loadCandidates();
+                    if (ev.target.closest('#StreamReadyForm')) markDirty();
+                });
+
+                window.addEventListener('scroll', function () {
+                    var header = val('srStickyHeader');
+                    if (header) header.classList.toggle('sr-is-scrolled', window.scrollY > 8);
+                }, { passive: true });
+
+                document.addEventListener('viewshow', function (ev) {
+                    if (ev.target && ev.target.id === 'StreamReadyPage') onShow();
+                });
+                document.addEventListener('pageshow', function (ev) {
+                    if (ev.target && ev.target.id === 'StreamReadyPage') onShow();
+                });
+                window.addEventListener('load', detectTheme);
+            }
+
+            var page = getPage();
+            if (page) {
+                var show = true;
+                try {
+                    if (localStorage.getItem('sr-settings-descriptions-visible') === 'false') show = false;
+                } catch (e) {}
+                applyDescriptionVisibility(show);
+                setBrandLogo();
+                wireTabBarDrag();
+                detectTheme();
+                setTimeout(detectTheme, 600);
+                onShow();
+            }
         })();
     </script>
+
 </div>
 </body>
 </html>

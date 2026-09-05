@@ -2398,3 +2398,30 @@ div#bazarrMappingsValidationResult {
 .jellyfin-tab-content.active > .sr-note-banner {
     grid-column: 1 / -1;
 }
+
+#StreamReadyPage .jellyfin-tab-content {
+    display: none !important;
+}
+#StreamReadyPage .jellyfin-tab-content.active {
+    display: grid !important;
+}
+#StreamReadyPage .jellyfin-tab-button {
+    pointer-events: auto;
+    cursor: pointer;
+    z-index: 2;
+}
+#StreamReadyPage .sr-tab-bar:not(.sr-dragging) .jellyfin-tab-button {
+    pointer-events: auto !important;
+}
+
+.sr-empty p {
+    margin: 0 0 10px;
+}
+.sr-empty .sr-scan-now {
+    margin-top: 8px;
+}
+.sr-toolbar .sr-scan-now .material-icons {
+    font-size: 18px;
+    margin-right: 4px;
+    vertical-align: -3px;
+}
