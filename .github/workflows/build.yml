@@ -3,12 +3,17 @@ name: Build plugin
 on:
   push:
     branches: [main]
+    tags:
+      - "v*.*.*.*"
   pull_request:
-  release:
-    types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
   build:
@@ -39,29 +44,52 @@ jobs:
           name: jellyfin-plugin-streamready
           path: artifacts/pkg/*.zip
 
-      - name: Attach release zip
-        if: github.event_name == 'release'
+      - name: Verify tag matches assembly version
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.event.release.tag_name }}" artifacts/pkg/*.zip --clobber
-
-      - name: Update catalog checksum
-        if: github.event_name == 'release'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_BODY: ${{ github.event.release.body }}
+          VERSION: ${{ steps.pkg.outputs.version }}
         run: |
           set -euo pipefail
-          VERSION="${{ steps.pkg.outputs.version }}"
-          CHECKSUM="${{ steps.pkg.outputs.checksum }}"
-          ZIP_NAME="${{ steps.pkg.outputs.zip_name }}"
-          SOURCE_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/${ZIP_NAME}"
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match AssemblyVersion $VERSION"
+            exit 1
+          fi
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.pkg.outputs.version }}
+        run: |
+          set -euo pipefail
+          TITLE="StreamReady ${VERSION}"
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" artifacts/pkg/*.zip --clobber
+            gh release edit "${GITHUB_REF_NAME}" --title "${TITLE}"
+          else
+            gh release create "${GITHUB_REF_NAME}" artifacts/pkg/*.zip \
+              --title "${TITLE}" \
+              --generate-notes
+          fi
+
+      - name: Update catalog checksum
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.pkg.outputs.version }}
+          CHECKSUM: ${{ steps.pkg.outputs.checksum }}
+          ZIP_NAME: ${{ steps.pkg.outputs.zip_name }}
+        run: |
+          set -euo pipefail
+          SOURCE_URL="https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}/${ZIP_NAME}"
+          CHANGELOG="$(gh release view "${GITHUB_REF_NAME}" --json body --jq '.body // ""')"
           python3 scripts/update_manifest.py \
             --manifest manifest.json \
             --version "$VERSION" \
             --checksum "$CHECKSUM" \
             --source-url "$SOURCE_URL" \
-            --changelog "${RELEASE_BODY:-See GitHub Releases.}"
+            --changelog "${CHANGELOG:-See GitHub Releases.}"
           cp manifest.json /tmp/streamready-manifest.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

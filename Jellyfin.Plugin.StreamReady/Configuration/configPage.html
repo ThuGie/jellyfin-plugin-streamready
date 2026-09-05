@@ -3,62 +3,14 @@
 <head>
     <title>StreamReady</title>
 </head>
-<body>
-<div id="StreamReadyPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-checkbox,emby-select,emby-button">
+<body style="background: black;">
+<div class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-checkbox,emby-select" data-role="page" id="StreamReadyPage">
     <script>
-        (function () {
-            if (document.getElementById('streamready-injected-css')) {
-                return;
-            }
-
-            function withToken(url) {
-                var token = ApiClient.accessToken && ApiClient.accessToken();
-                if (!token) {
-                    return url;
-                }
-                return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'api_key=' + encodeURIComponent(token);
-            }
-
-            function injectCss(css) {
-                if (!css || document.getElementById('streamready-injected-css')) {
-                    return;
-                }
-                var style = document.createElement('style');
-                style.id = 'streamready-injected-css';
-                style.textContent = css;
-                document.head.appendChild(style);
-                var critical = document.getElementById('streamready-critical');
-                if (critical) {
-                    critical.remove();
-                }
-            }
-
-            function linkFallback() {
-                if (document.getElementById('streamready-injected-css')) {
-                    return;
-                }
-                var link = document.createElement('link');
-                link.id = 'streamready-injected-css';
-                link.rel = 'stylesheet';
-                link.href = withToken(ApiClient.getUrl('web/ConfigurationPage', { name: 'StreamReadyCss' }));
-                document.head.appendChild(link);
-            }
-
-            var cssUrl = ApiClient.getUrl('StreamReady/Configuration/stylesheet');
-            if (ApiClient.get) {
-                ApiClient.get(cssUrl).then(injectCss).catch(linkFallback);
-            } else if (ApiClient.ajax) {
-                ApiClient.ajax({ url: cssUrl, type: 'GET', dataType: 'text' }).then(injectCss).catch(linkFallback);
-            } else {
-                linkFallback();
-            }
-        })();
+        var link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = ApiClient.getUrl('/StreamReady/Configuration/configPage.css');
+        document.head.appendChild(link);
     </script>
-    <style id="streamready-critical">
-        #StreamReadyPage .jellyfin-tab-content { display: none; }
-        #StreamReadyPage .jellyfin-tab-content.active { display: block; }
-        #StreamReadyPage .sr-tab-bar { display: flex; flex-wrap: wrap; gap: 8px; }
-    </style>
     <div data-role="content">
         <div class="content-primary">
             <div class="sr-sticky-header" id="srStickyHeader">
@@ -66,26 +18,33 @@
                     <div class="sr-header-title-row">
                         <img class="sr-brand-logo" alt="" width="40" height="40"/>
                         <h2 class="sectionTitle">StreamReady</h2>
-                        <a is="emby-linkbutton" class="raised raised-mini emby-button" target="_blank" href="https://github.com/ThuGie/jellyfin-plugin-streamready">Help</a>
-                        <button id="srToggleDesc" type="button" class="raised raised-mini emby-button" aria-pressed="true">Descriptions On</button>
+                        <a is="emby-linkbutton" class="raised raised-mini emby-button sr-help-link" target="_blank" href="https://github.com/ThuGie/jellyfin-plugin-streamready" title="Help" aria-label="Docs and Help">
+                            <span class="sr-help-link-label">Help</span>
+                        </a>
+                        <button id="toggleDescriptionsBtn" type="button" class="raised raised-mini emby-button sr-desc-toggle" title="Show or hide setting descriptions" aria-label="Show or hide setting descriptions" aria-pressed="true">
+                            <span class="sr-desc-toggle-label">Descriptions</span>
+                            <span class="sr-desc-toggle-state" aria-hidden="true">On</span>
+                        </button>
                     </div>
-                    <div id="srSettingsSearchContainer">
+                    <div id="settingsSearchContainer">
                         <div>
                             <i class="material-icons sr-search-icon">search</i>
-                            <input id="srSettingsSearchInput" type="text" placeholder="Search settings..." />
+                            <input id="settingsSearchInput" type="text" placeholder="Search settings..." />
+                            <span id="settingsSearchCount"></span>
+                            <button id="settingsSearchClear" type="button" title="Clear search">&#x2715;</button>
                         </div>
                     </div>
                 </div>
                 <div class="sr-tab-bar">
-                    <button type="button" class="jellyfin-tab-button active" data-tab="overview"><h3><i class="material-icons">dashboard</i>Overview</h3></button>
-                    <button type="button" class="jellyfin-tab-button" data-tab="needs"><h3><i class="material-icons">playlist_add_check</i>Needs Encoding</h3></button>
-                    <button type="button" class="jellyfin-tab-button" data-tab="queue"><h3><i class="material-icons">queue</i>Queue</h3></button>
-                    <button type="button" class="jellyfin-tab-button" data-tab="compatibility"><h3><i class="material-icons">rule</i>Compatibility</h3></button>
-                    <button type="button" class="jellyfin-tab-button" data-tab="encoding"><h3><i class="material-icons">movie</i>Encoding</h3></button>
-                    <button type="button" class="jellyfin-tab-button" data-tab="libraries"><h3><i class="material-icons">video_library</i>Libraries</h3></button>
-                    <button type="button" class="jellyfin-tab-button" data-tab="replacement"><h3><i class="material-icons">swap_horiz</i>Replacement</h3></button>
-                    <button type="button" class="jellyfin-tab-button" data-tab="schedule"><h3><i class="material-icons">schedule</i>Schedule</h3></button>
-                    <button type="button" class="jellyfin-tab-button" data-tab="docs"><h3><i class="material-icons">menu_book</i>Docs</h3></button>
+                    <button type="button" class="jellyfin-tab-button active" data-tab="overview"><h3><i class="material-icons sr-tab-icon" aria-hidden="true">dashboard</i>Overview</h3></button>
+                    <button type="button" class="jellyfin-tab-button" data-tab="needs"><h3><i class="material-icons sr-tab-icon" aria-hidden="true">playlist_add_check</i>Needs Encoding</h3></button>
+                    <button type="button" class="jellyfin-tab-button" data-tab="queue"><h3><i class="material-icons sr-tab-icon" aria-hidden="true">queue</i>Queue</h3></button>
+                    <button type="button" class="jellyfin-tab-button" data-tab="compatibility"><h3><i class="material-icons sr-tab-icon" aria-hidden="true">rule</i>Compatibility</h3></button>
+                    <button type="button" class="jellyfin-tab-button" data-tab="encoding"><h3><i class="material-icons sr-tab-icon" aria-hidden="true">movie</i>Encoding</h3></button>
+                    <button type="button" class="jellyfin-tab-button" data-tab="libraries"><h3><i class="material-icons sr-tab-icon" aria-hidden="true">video_library</i>Libraries</h3></button>
+                    <button type="button" class="jellyfin-tab-button" data-tab="replacement"><h3><i class="material-icons sr-tab-icon" aria-hidden="true">swap_horiz</i>Replacement</h3></button>
+                    <button type="button" class="jellyfin-tab-button" data-tab="schedule"><h3><i class="material-icons sr-tab-icon" aria-hidden="true">schedule</i>Schedule</h3></button>
+                    <button type="button" class="jellyfin-tab-button" data-tab="docs"><h3><i class="material-icons sr-tab-icon" aria-hidden="true">menu_book</i>Docs</h3></button>
                 </div>
             </div>
 
@@ -107,16 +66,16 @@
                     <fieldset class="sr-fieldset-wide">
                         <legend class="sectionTitle"><i class="material-icons sr-legend-icon">sensors</i>Status</legend>
                         <div class="configSection">
-                            <div class="sr-status-grid" id="srStatusGrid"></div>
+                            <div class="sr-service-dashboard" id="srStatusGrid"></div>
                         </div>
                     </fieldset>
                     <fieldset class="sr-fieldset-wide">
                         <legend class="sectionTitle"><i class="material-icons sr-legend-icon">bolt</i>Quick actions</legend>
                         <div class="configSection">
                             <div class="sr-quick-actions-grid">
-                                <button type="button" class="sr-quick-action" id="srScanNow"><i class="material-icons">search</i><span><span class="sr-quick-action-title">Scan now</span><span class="sr-quick-action-detail">Find files that need encoding</span></span></button>
-                                <button type="button" class="sr-quick-action" id="srPauseWorker"><i class="material-icons">pause</i><span><span class="sr-quick-action-title">Pause encoder</span><span class="sr-quick-action-detail">Keep queued jobs waiting</span></span></button>
-                                <button type="button" class="sr-quick-action" id="srResumeWorker"><i class="material-icons">play_arrow</i><span><span class="sr-quick-action-title">Resume encoder</span><span class="sr-quick-action-detail">Continue the encode queue</span></span></button>
+                                <button type="button" class="sr-quick-action" id="srScanNow"><i class="material-icons sr-quick-action-icon">search</i><span class="sr-quick-action-text"><span class="sr-quick-action-title">Scan now</span><span class="sr-quick-action-detail">Find files that need encoding</span></span></button>
+                                <button type="button" class="sr-quick-action" id="srPauseWorker"><i class="material-icons sr-quick-action-icon">pause</i><span class="sr-quick-action-text"><span class="sr-quick-action-title">Pause encoder</span><span class="sr-quick-action-detail">Keep queued jobs waiting</span></span></button>
+                                <button type="button" class="sr-quick-action" id="srResumeWorker"><i class="material-icons sr-quick-action-icon">play_arrow</i><span class="sr-quick-action-text"><span class="sr-quick-action-title">Resume encoder</span><span class="sr-quick-action-detail">Continue the encode queue</span></span></button>
                             </div>
                         </div>
                     </fieldset>
@@ -347,10 +306,14 @@
                     </fieldset>
                 </div>
 
-                <div class="sr-save-dock">
-                    <button is="emby-button" type="submit" class="raised button-submit sr-save-dock-btn">
-                        <i class="material-icons">save</i>
-                        <span>Save</span>
+                <div class="sr-save-dock" role="toolbar" aria-label="Save settings">
+                    <span class="sr-unsaved-badge" role="status" aria-live="polite">
+                        <i class="material-icons" aria-hidden="true">fiber_manual_record</i>
+                        Unsaved changes
+                    </span>
+                    <button class="emby-button raised button-submit sr-save-dock-btn" type="submit">
+                        <i class="material-icons sr-save-dock-icon" aria-hidden="true">save</i>
+                        <span>Save Settings</span>
                     </button>
                 </div>
             </form>
@@ -364,12 +327,7 @@
             var visibleCandidates = [];
             var brandLogo = page.querySelector('.sr-brand-logo');
             if (brandLogo) {
-                var logoUrl = ApiClient.getUrl('StreamReady/thumb.png');
-                var token = ApiClient.accessToken && ApiClient.accessToken();
-                if (token) {
-                    logoUrl += (logoUrl.indexOf('?') >= 0 ? '&' : '?') + 'api_key=' + encodeURIComponent(token);
-                }
-                brandLogo.src = logoUrl;
+                brandLogo.src = ApiClient.getUrl('/StreamReady/thumb.png');
             }
 
             function api(path, method, body) {
@@ -386,12 +344,61 @@
             }
 
             function detectTheme() {
-                var bg = getComputedStyle(document.body).backgroundColor || '';
-                var m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-                if (!m) return;
-                var lum = (0.2126 * m[1] + 0.7152 * m[2] + 0.0722 * m[3]) / 255;
-                page.classList.toggle('sr-light-theme', lum > 0.5);
+                if (!page) return;
+                try {
+                    var bg = getComputedStyle(document.documentElement).backgroundColor;
+                    var m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+                    if (!m) {
+                        page.classList.remove('sr-light-theme');
+                        page.classList.add('sr-dark-theme');
+                        return;
+                    }
+                    var sum = (+m[1]) + (+m[2]) + (+m[3]);
+                    var isLight = sum > 450;
+                    page.classList.toggle('sr-light-theme', isLight);
+                    page.classList.toggle('sr-dark-theme', !isLight);
+                } catch (e) {
+                    page.classList.remove('sr-light-theme');
+                    page.classList.add('sr-dark-theme');
+                }
             }
+            detectTheme();
+            window.addEventListener('load', detectTheme);
+            setTimeout(detectTheme, 600);
+
+            (function wireTabBarDrag() {
+                var bar = page.querySelector('.sr-tab-bar');
+                if (!bar) return;
+                var isDown = false;
+                var startX = 0;
+                var startScroll = 0;
+                var dragged = false;
+                function updateScrollFade() {
+                    var maxScroll = bar.scrollWidth - bar.clientWidth;
+                    bar.classList.toggle('sr-scroll-fade-left', bar.scrollLeft > 1);
+                    bar.classList.toggle('sr-scroll-fade-right', bar.scrollLeft < maxScroll - 1);
+                }
+                bar.addEventListener('mousedown', function (e) {
+                    isDown = true;
+                    dragged = false;
+                    startX = e.pageX;
+                    startScroll = bar.scrollLeft;
+                    bar.classList.add('sr-dragging');
+                });
+                window.addEventListener('mousemove', function (e) {
+                    if (!isDown) return;
+                    var dx = e.pageX - startX;
+                    if (Math.abs(dx) > 5) dragged = true;
+                    bar.scrollLeft = startScroll - dx;
+                    updateScrollFade();
+                });
+                window.addEventListener('mouseup', function () {
+                    isDown = false;
+                    bar.classList.remove('sr-dragging');
+                });
+                bar.addEventListener('scroll', updateScrollFade, { passive: true });
+                updateScrollFade();
+            })();
 
             function showTab(id) {
                 page.querySelectorAll('.jellyfin-tab-button').forEach(function (btn) {
@@ -428,6 +435,7 @@
                     });
                     renderLibraries(libraries, (config.SelectedLibraryIds || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean));
                     Dashboard.hideLoadingMsg();
+                    clearDirty();
                     refreshStatus();
                     loadCandidates();
                     loadQueue();
@@ -476,6 +484,7 @@
                     config.MaxConcurrentJobs = parseInt(val('MaxConcurrentJobs').value, 10) || 1;
                     config.SelectedLibraryIds = selectedLibraries();
                     ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
+                        clearDirty();
                         Dashboard.processPluginConfigurationUpdateResult(result);
                     });
                 });
@@ -487,19 +496,19 @@
                     var grid = val('srStatusGrid');
                     if (!grid) return;
                     var cards = [
-                        card(s.ffmpegReady ? 'sr-ok' : 'sr-warn', 'movie_filter', 'FFmpeg', s.ffmpegReady ? s.ffmpegPath : 'Not found'),
-                        card(s.autoDirectPreTranscode ? 'sr-warn' : 'sr-ok', 'tune', 'Mode', s.autoDirectPreTranscode ? 'Auto Direct Pre-Transcode' : 'Manual'),
-                        card(s.configured ? 'sr-ok' : 'sr-warn', 'video_library', 'Libraries', s.configured ? 'Selected' : 'Select libraries to begin'),
-                        card('sr-ok', 'playlist_add_check', 'Needs encoding', String(s.candidateCount || 0)),
-                        card(s.runningCount ? 'sr-warn' : 'sr-ok', 'queue', 'Queue', (s.queuedCount || 0) + ' waiting, ' + (s.runningCount || 0) + ' running'),
-                        card(s.paused ? 'sr-warn' : 'sr-ok', s.paused ? 'pause' : 'play_arrow', 'Worker', s.paused ? 'Paused' : (s.currentJob ? (s.currentJob.Name + ' — ' + Math.round(s.currentJob.Progress) + '%') : 'Idle'))
+                        card(s.ffmpegReady ? 'ok' : 'warn', 'movie_filter', 'FFmpeg', s.ffmpegReady ? s.ffmpegPath : 'Not found'),
+                        card(s.autoDirectPreTranscode ? 'warn' : 'ok', 'tune', 'Mode', s.autoDirectPreTranscode ? 'Auto Direct Pre-Transcode' : 'Manual'),
+                        card(s.configured ? 'ok' : 'warn', 'video_library', 'Libraries', s.configured ? 'Selected' : 'Select libraries to begin'),
+                        card('ok', 'playlist_add_check', 'Needs encoding', String(s.candidateCount || 0)),
+                        card(s.runningCount ? 'warn' : 'ok', 'queue', 'Queue', (s.queuedCount || 0) + ' waiting, ' + (s.runningCount || 0) + ' running'),
+                        card(s.paused ? 'warn' : 'ok', s.paused ? 'pause' : 'play_arrow', 'Worker', s.paused ? 'Paused' : (s.currentJob ? (s.currentJob.Name + ' — ' + Math.round(s.currentJob.Progress) + '%') : 'Idle'))
                     ];
                     grid.innerHTML = cards.join('');
                 }).catch(function () {});
             }
 
             function card(state, icon, name, detail) {
-                return '<div class="sr-status-card ' + state + '"><i class="material-icons">' + icon + '</i><div><div class="sr-quick-action-title">' + escapeHtml(name) + '</div><div class="sr-status-detail">' + escapeHtml(detail || '') + '</div></div></div>';
+                return '<div class="sr-service-card sr-state-' + state + '"><i class="material-icons sr-service-icon">' + icon + '</i><div class="sr-service-body"><div class="sr-service-name">' + escapeHtml(name) + '</div><div class="sr-service-detail">' + escapeHtml(detail || '') + '</div></div></div>';
             }
 
             function loadCandidates() {
@@ -525,7 +534,7 @@
                 var html = '<table class="sr-table"><thead><tr><th></th><th>Title</th><th>Why</th><th>Plan</th><th>Size</th><th></th></tr></thead><tbody>';
                 rows.forEach(function (row) {
                     html += '<tr><td><input type="checkbox" class="sr-pick" data-id="' + row.id + '"/></td>';
-                    html += '<td><strong>' + escapeHtml(row.name) + '</strong><div class="sr-status-detail">' + escapeHtml((row.seriesName ? row.seriesName + ' · ' : '') + row.itemType + ' · ' + row.container + ' · ' + row.videoCodec + ' / ' + row.audioCodec + ' · ' + row.videoRange) + '</div></td>';
+                    html += '<td><strong>' + escapeHtml(row.name) + '</strong><div class="sr-service-detail">' + escapeHtml((row.seriesName ? row.seriesName + ' · ' : '') + row.itemType + ' · ' + row.container + ' · ' + row.videoCodec + ' / ' + row.audioCodec + ' · ' + row.videoRange) + '</div></td>';
                     html += '<td>' + (row.reasons || []).map(function (r) { return '<span class="sr-chip">' + escapeHtml(r) + '</span>'; }).join('') + '</td>';
                     html += '<td><span class="sr-chip sr-' + String(row.plannedAction || '').toLowerCase() + '">' + escapeHtml(row.plannedAction) + '</span></td>';
                     html += '<td>' + escapeHtml(row.sizeLabel || '') + '</td>';
@@ -546,7 +555,7 @@
                     }
                     var html = '<table class="sr-table"><thead><tr><th>Title</th><th>Status</th><th>Progress</th><th></th></tr></thead><tbody>';
                     rows.forEach(function (row) {
-                        html += '<tr><td><strong>' + escapeHtml(row.name) + '</strong><div class="sr-status-detail">' + escapeHtml(row.action + (row.error ? ' · ' + row.error : '')) + '</div></td>';
+                        html += '<tr><td><strong>' + escapeHtml(row.name) + '</strong><div class="sr-service-detail">' + escapeHtml(row.action + (row.error ? ' · ' + row.error : '')) + '</div></td>';
                         html += '<td>' + escapeHtml(row.status) + '</td>';
                         html += '<td><div class="sr-progress"><span style="width:' + Math.round(row.progress || 0) + '%"></span></div> ' + Math.round(row.progress || 0) + '%</td>';
                         html += '<td class="sr-row-actions">';
@@ -629,16 +638,66 @@
                 if (retry) api('/queue/' + retry.getAttribute('data-id') + '/retry', 'POST').then(loadQueue);
                 if (skip) api('/queue/' + skip.getAttribute('data-id') + '/skip', 'POST').then(loadQueue);
             });
-            val('srToggleDesc').addEventListener('click', function () {
-                var hidden = page.classList.toggle('sr-hide-desc');
-                val('srToggleDesc').textContent = hidden ? 'Descriptions Off' : 'Descriptions On';
-            });
-            val('srSettingsSearchInput').addEventListener('input', function () {
-                var q = val('srSettingsSearchInput').value.toLowerCase();
-                page.querySelectorAll('#StreamReadyForm fieldset').forEach(function (fs) {
-                    fs.style.display = !q || fs.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
+            var descToggleBtn = document.getElementById('toggleDescriptionsBtn');
+            var descPrefKey = 'sr-settings-descriptions-visible';
+            function applyDescriptionVisibility(show) {
+                try { document.body.classList.toggle('sr-hide-descriptions', !show); } catch (e) {}
+                if (descToggleBtn) {
+                    descToggleBtn.setAttribute('aria-pressed', show ? 'true' : 'false');
+                    descToggleBtn.classList.toggle('sr-desc-toggle-off', !show);
+                    var state = descToggleBtn.querySelector('.sr-desc-toggle-state');
+                    if (state) state.textContent = show ? 'On' : 'Off';
+                }
+            }
+            (function initDescriptionVisibility() {
+                var show = true;
+                try {
+                    if (localStorage.getItem(descPrefKey) === 'false') show = false;
+                } catch (e) {}
+                applyDescriptionVisibility(show);
+            })();
+            if (descToggleBtn) {
+                descToggleBtn.addEventListener('click', function () {
+                    var currentlyShown = !document.body.classList.contains('sr-hide-descriptions');
+                    var nextShown = !currentlyShown;
+                    applyDescriptionVisibility(nextShown);
+                    try { localStorage.setItem(descPrefKey, nextShown ? 'true' : 'false'); } catch (e) {}
                 });
-            });
+            }
+
+            var searchInput = document.getElementById('settingsSearchInput');
+            var searchClear = document.getElementById('settingsSearchClear');
+            var searchCount = document.getElementById('settingsSearchCount');
+            function runSearch() {
+                var q = (searchInput && searchInput.value || '').trim().toLowerCase();
+                var fieldsets = page.querySelectorAll('#StreamReadyForm fieldset');
+                var visible = 0;
+                fieldsets.forEach(function (fs) {
+                    var match = !q || fs.textContent.toLowerCase().indexOf(q) >= 0;
+                    fs.style.display = match ? '' : 'none';
+                    if (match) visible++;
+                });
+                if (searchCount) {
+                    searchCount.textContent = q ? visible + '/' + fieldsets.length : '';
+                    searchCount.style.display = q ? 'block' : 'none';
+                }
+                if (searchClear) searchClear.classList.toggle('show', !!q);
+                page.querySelector('#StreamReadyForm').classList.toggle('sr-search-mode', !!q);
+            }
+            if (searchInput) searchInput.addEventListener('input', runSearch);
+            if (searchClear) {
+                searchClear.addEventListener('click', function () {
+                    searchInput.value = '';
+                    runSearch();
+                    searchInput.focus();
+                });
+            }
+
+            var saveDock = page.querySelector('.sr-save-dock');
+            function markDirty() { if (saveDock) saveDock.classList.add('sr-dirty'); }
+            function clearDirty() { if (saveDock) saveDock.classList.remove('sr-dirty'); }
+            val('StreamReadyForm').addEventListener('input', markDirty);
+            val('StreamReadyForm').addEventListener('change', markDirty);
             window.addEventListener('scroll', function () {
                 val('srStickyHeader').classList.toggle('sr-is-scrolled', window.scrollY > 8);
             }, { passive: true });
