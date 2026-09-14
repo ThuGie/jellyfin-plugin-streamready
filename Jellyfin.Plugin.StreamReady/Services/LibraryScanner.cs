@@ -139,17 +139,30 @@ public class LibraryScanner
             return;
         }
 
-        var libraries = ResolveLibraries(config);
-        var match = libraries.FirstOrDefault(l => item.GetParents().Any(p => p.Id == l.Id) || item.Id == l.Id);
-        if (match.Id == Guid.Empty && libraries.Count > 0)
+        var selected = CompatibilityAnalyzer.Split(config.SelectedLibraryIds)
+            .Select(s => s.Replace("-", string.Empty, StringComparison.Ordinal))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (selected.Count == 0)
         {
-            match = libraries.FirstOrDefault(l =>
-                item.Path is not null &&
-                _libraryManager.GetItemById(l.Id) is BaseItem folder &&
-                item.Path.StartsWith(folder.Path ?? "\0", StringComparison.OrdinalIgnoreCase));
+            return;
         }
 
-        if (match.Id == Guid.Empty)
+        // Prefer Jellyfin's own collection-folder lookup — avoids rediscovering all libraries per item.
+        var folders = _libraryManager.GetCollectionFolders(item);
+
+        Folder? match = null;
+        foreach (var folder in folders)
+        {
+            var idN = folder.Id.ToString("N");
+            if (selected.Contains(idN)
+                || selected.Contains(folder.Id.ToString("D").Replace("-", string.Empty, StringComparison.Ordinal)))
+            {
+                match = folder;
+                break;
+            }
+        }
+
+        if (match is null)
         {
             return;
         }

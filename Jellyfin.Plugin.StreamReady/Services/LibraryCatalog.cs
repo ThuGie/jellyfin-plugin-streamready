@@ -9,8 +9,21 @@ public static class LibraryCatalog
 {
     public sealed record LibraryInfo(string Id, string Name, string CollectionType);
 
+    private static readonly object CacheGate = new();
+    private static List<LibraryInfo>? _cache;
+    private static DateTime _cacheUtc = DateTime.MinValue;
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(60);
+
     public static List<LibraryInfo> ListLibraries(ILibraryManager libraryManager, ILogger? logger = null)
     {
+        lock (CacheGate)
+        {
+            if (_cache is not null && DateTime.UtcNow - _cacheUtc < CacheTtl)
+            {
+                return _cache;
+            }
+        }
+
         var byId = new Dictionary<string, LibraryInfo>(StringComparer.OrdinalIgnoreCase);
 
         // 1) Same source Jellyfin Dashboard uses: virtual folder dirs + ItemId from user root.
@@ -84,9 +97,28 @@ public static class LibraryCatalog
             }
         }
 
-        logger?.LogInformation("StreamReady discovered {Count} libraries", byId.Count);
-        return byId.Values
+        var list = byId.Values
             .OrderBy(l => l.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+        // Only log when the catalog is (re)built — not on every AnalyzeItem hit.
+        logger?.LogDebug("StreamReady discovered {Count} libraries", list.Count);
+
+        lock (CacheGate)
+        {
+            _cache = list;
+            _cacheUtc = DateTime.UtcNow;
+        }
+
+        return list;
+    }
+
+    public static void Invalidate()
+    {
+        lock (CacheGate)
+        {
+            _cache = null;
+            _cacheUtc = DateTime.MinValue;
+        }
     }
 }
