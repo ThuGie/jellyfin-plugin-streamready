@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/ThuGie/jellyfin-plugin-streamready/main/images/logo.png",
     "versions": [
       {
+        "version": "1.2.2.0",
+        "changelog": "**Full Changelog**: https://github.com/ThuGie/jellyfin-plugin-streamready/compare/v1.2.1.0...v1.2.2.0",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/ThuGie/jellyfin-plugin-streamready/releases/download/v1.2.2.0/jellyfin-plugin-streamready_1.2.2.0.zip",
+        "checksum": "a302f07ed079d4c28c4569ca9c7cd736",
+        "timestamp": "2026-09-14T02:31:54Z"
+      },
+      {
         "version": "1.2.1.0",
         "changelog": "**Full Changelog**: https://github.com/ThuGie/jellyfin-plugin-streamready/compare/v1.2.0.0...v1.2.1.0",
         "targetAbi": "10.11.0.0",
