@@ -1225,7 +1225,8 @@
                         + '?version=' + version + '&startSeconds=' + (start.value || '0'));
                     try {
                         var response = await fetch(url, {
-                            headers: { 'X-Emby-Token': ApiClient.accessToken() }, signal: current.signal
+                            headers: { 'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"' },
+                            signal: current.signal
                         });
                         if (!response.ok) {
                             var body = await response.json().catch(function () { return {}; });
