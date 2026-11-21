@@ -79,6 +79,25 @@ try
     Check(!store.Requeue(job.Id), "A hidden job cannot be retried");
     var waiting = store.Enqueue(candidate);
     Check(store.RemoveFromQueue(waiting.Id) && store.DequeueNext() is null, "Removing a waiting job prevents dispatch");
+    var seriesId = Guid.NewGuid().ToString("D");
+    var episodeOne = new CandidateRecord { Id = "episode1", ItemId = "episode1", ItemType = "Episode",
+        SeriesName = "Shared Title", SeriesId = seriesId, EpisodeNumber = 1 };
+    var episodeTwo = new CandidateRecord { Id = "episode2", ItemId = "episode2", ItemType = "Episode",
+        SeriesName = "Shared Title", SeriesId = seriesId, EpisodeNumber = 2 };
+    var unrelated = new CandidateRecord { Id = "unrelated", ItemId = "unrelated", ItemType = "Episode",
+        SeriesName = "Shared Title", SeriesId = Guid.NewGuid().ToString("D") };
+    store.UpsertCandidates([episodeTwo, unrelated, episodeOne]);
+    var controller = new Jellyfin.Plugin.StreamReady.Controllers.StreamReadyController(store, null!, null!, null!,
+        null!, null!, NullLogger<Jellyfin.Plugin.StreamReady.Controllers.StreamReadyController>.Instance);
+    var groupId = Guid.Parse(seriesId).ToString("N");
+    using var grouped = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(
+        controller.GetCandidateSeries(null, null).Value));
+    Check(grouped.RootElement.GetProperty("total").GetInt32() == 2,
+        "Series IDs separate different series with the same title");
+    controller.EncodeCandidateSeries(groupId);
+    controller.EncodeCandidateSeries(groupId);
+    Check(store.GetQueue().Count == 2 && store.DequeueNext()?.ItemId == "episode1"
+        && store.DequeueNext()?.ItemId == "episode2", "Whole-series encode queues flagged episodes in order without duplicates");
     File.WriteAllText(path, "invalid");
     var recovered = new JobStore(NullLogger<JobStore>.Instance, path);
     Check(recovered.IsHealthy && recovered.GetJob(job.Id) is not null, "Recover from the previous snapshot");

@@ -27,6 +27,9 @@ public class CandidateRecord
     public string Name { get; set; } = string.Empty;
 
     public string? SeriesName { get; set; }
+    public string? SeriesId { get; set; }
+    public int? SeasonNumber { get; set; }
+    public int? EpisodeNumber { get; set; }
 
     public string ItemType { get; set; } = "Movie";
 

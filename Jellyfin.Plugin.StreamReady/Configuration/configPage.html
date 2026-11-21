@@ -96,6 +96,10 @@
                                     Scan now
                                 </button>
                                 <input is="emby-input" id="srSearchQ" type="text" placeholder="Search title, path, codec…" style="max-width:220px;" />
+                                <select is="emby-select" id="srCandidateView" aria-label="Candidate view">
+                                    <option value="files">File list</option>
+                                    <option value="series">Series folders</option>
+                                </select>
                                 <select is="emby-select" id="srFilterType">
                                     <option value="">All types</option>
                                     <option value="Movie">Movies</option>
@@ -898,7 +902,103 @@
                 return '<button type="button" class="sr-service-card sr-state-' + state + '"' + jump + '><i class="material-icons sr-service-icon">' + icon + '</i><div class="sr-service-body"><div class="sr-service-name">' + escapeHtml(name) + '</div><div class="sr-service-detail">' + escapeHtml(detail || '') + '</div></div></button>';
             }
 
+            var seriesOffset = 0;
+            var seriesRevision = 0;
+            var seriesPagePending = false;
+
+            function seriesFilters() {
+                return '&reason=' + encodeURIComponent(val('srFilterReason').value)
+                    + '&q=' + encodeURIComponent(val('srSearchQ').value.trim());
+            }
+
+            function loadSeriesFolders(reset) {
+                var host = val('srCandidates');
+                if (!host || reset === 'soft') return;
+                if (reset || seriesOffset === 0) {
+                    seriesRevision++;
+                    seriesOffset = 0;
+                    seriesPagePending = false;
+                    host.textContent = '';
+                }
+                if (seriesPagePending) return;
+                seriesPagePending = true;
+                var revision = seriesRevision;
+                api('/candidates/series?skip=' + seriesOffset + seriesFilters()).then(function (result) {
+                    if (revision !== seriesRevision || val('srCandidateView').value !== 'series') return;
+                    var rows = pick(result, 'items') || [];
+                    rows.forEach(function (row) {
+                        var folder = document.createElement('details');
+                        folder.className = 'sr-series-folder';
+                        folder.innerHTML = '<summary><strong>' + escapeHtml(pick(row, 'name')) + '</strong> '
+                            + '<span>' + escapeHtml(pick(row, 'libraryName')) + ' | '
+                            + pick(row, 'matchingEpisodes') + ' matching | ' + formatReplacementSize(pick(row, 'sizeBytes')) + '</span></summary>'
+                            + '<button type="button" class="raised emby-button sr-encode-series" data-id="'
+                            + escapeHtml(pick(row, 'id')) + '">Encode whole series</button>'
+                            + '<div class="sr-series-episodes"></div>';
+                        folder.addEventListener('toggle', function () {
+                            if (!folder.open || folder.dataset.loaded) return;
+                            folder.dataset.loaded = 'true';
+                            loadSeriesEpisodes(folder, pick(row, 'id'), 0);
+                        });
+                        host.appendChild(folder);
+                    });
+                    seriesOffset += rows.length;
+                    val('srLoadMore').style.display = seriesOffset < pick(result, 'total') ? '' : 'none';
+                    if (!seriesOffset) host.textContent = 'No series match these filters.';
+                }).catch(function () {
+                    if (revision === seriesRevision) host.textContent = 'Could not load series.';
+                }).finally(function () {
+                    if (revision === seriesRevision) seriesPagePending = false;
+                });
+            }
+
+            function loadSeriesEpisodes(folder, id, skip) {
+                var panel = folder.querySelector('.sr-series-episodes');
+                var more = panel.querySelector('.sr-series-more');
+                if (more) more.remove();
+                if (!skip) panel.textContent = 'Loading episodes...';
+                api('/candidates/series/' + encodeURIComponent(id) + '/episodes?skip=' + skip + seriesFilters())
+                    .then(function (result) {
+                        if (!folder.isConnected) return;
+                        if (!skip) panel.textContent = '';
+                        var rows = pick(result, 'items') || [];
+                        rows.forEach(function (row) {
+                            var episode = document.createElement('div');
+                            episode.className = 'sr-series-episode';
+                            var season = pick(row, 'seasonNumber');
+                            var number = pick(row, 'episodeNumber');
+                            var prefix = season != null && number != null ? 'S' + season + 'E' + number + ' | ' : '';
+                            episode.innerHTML = '<span>' + escapeHtml(prefix + pick(row, 'name')) + ' | '
+                                + escapeHtml(pick(row, 'sizeLabel')) + '</span>'
+                                + '<button type="button" class="raised raised-mini emby-button sr-encode-one" data-id="'
+                                + escapeHtml(pick(row, 'id')) + '">Encode</button>';
+                            panel.appendChild(episode);
+                        });
+                        if (skip + rows.length < pick(result, 'total')) {
+                            var next = document.createElement('button');
+                            next.type = 'button';
+                            next.className = 'raised emby-button sr-series-more';
+                            next.textContent = 'Load more episodes';
+                            next.addEventListener('click', function () { loadSeriesEpisodes(folder, id, skip + rows.length); });
+                            panel.appendChild(next);
+                        }
+                    }).catch(function () {
+                        delete folder.dataset.loaded;
+                        panel.textContent = 'Could not load episodes. Collapse and reopen this series to retry.';
+                    });
+            }
+
             function loadCandidates(reset) {
+                var view = val('srCandidateView');
+                var seriesView = view && view.value === 'series';
+                ['srFilterType', 'srSortBy', 'srSortDir', 'srEncodeSelected', 'srEncodeVisible', 'srEncodeMatching'].forEach(function (id) {
+                    var control = val(id);
+                    if (control) control.style.display = seriesView ? 'none' : '';
+                });
+                if (seriesView) {
+                    loadSeriesFolders(reset);
+                    return;
+                }
                 if (reset === true) {
                     candidatesSkip = 0;
                     visibleCandidates = [];
@@ -924,6 +1024,7 @@
                 if (reason) qs.push('reason=' + encodeURIComponent(reason));
                 if (q) qs.push('q=' + encodeURIComponent(q));
                 api('/candidates?' + qs.join('&')).then(function (payload) {
+                    if (val('srCandidateView') && val('srCandidateView').value === 'series') return;
                     var rows = [];
                     var total = 0;
                     payload = parseJsonPayload(payload);
@@ -1317,6 +1418,21 @@
                         });
                         return;
                     }
+                    var encodeSeries = ev.target.closest('.sr-encode-series');
+                    if (encodeSeries) {
+                        if (!window.confirm('Queue all flagged episodes in this series, including those outside the current filters?')) return;
+                        encodeSeries.disabled = true;
+                        api('/candidates/series/' + encodeURIComponent(encodeSeries.getAttribute('data-id')) + '/encode', 'POST')
+                            .then(function (result) {
+                                Dashboard.alert('Queued ' + pick(result, 'queued') + ' of ' + pick(result, 'matched') + ' flagged episodes.');
+                                loadQueue();
+                                refreshStatus();
+                            }).catch(function () {
+                                Dashboard.alert('Could not queue this series. Scan again and retry.');
+                            }).finally(function () { encodeSeries.disabled = false; });
+                        return;
+                    }
+
                     if (ev.target.closest('#srEncodeMatching')) {
                         ev.preventDefault();
                         var typeElM = val('srFilterType');
@@ -1445,6 +1561,11 @@
                 document.addEventListener('change', function (ev) {
                     var page = ev.target.closest && ev.target.closest('#StreamReadyPage');
                     if (!page) return;
+                    if (ev.target.id === 'srCandidateView') {
+                        seriesRevision++;
+                        seriesOffset = 0;
+                        loadCandidates(true);
+                    }
                     if (ev.target.id === 'srFilterType' || ev.target.id === 'srFilterReason' || ev.target.id === 'srSortBy' || ev.target.id === 'srSortDir') {
                         loadCandidates(true);
                     }

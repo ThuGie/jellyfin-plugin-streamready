@@ -204,6 +204,71 @@ public class StreamReadyController : ControllerBase
     }
 
     [Authorize(Policy = Policies.RequiresElevation)]
+    [HttpGet("candidates/series")]
+    public ActionResult<object> GetCandidateSeries([FromQuery] string? reason, [FromQuery] string? q,
+        [FromQuery] int skip = 0, [FromQuery] int limit = 100)
+    {
+        var groups = FilterCandidates(reason, "Episode", q)
+            .Where(candidate => !string.IsNullOrWhiteSpace(candidate.SeriesName))
+            .GroupBy(SeriesKey)
+            .Select(group => new
+            {
+                id = group.Key,
+                name = group.First().SeriesName,
+                libraryName = group.First().LibraryName,
+                matchingEpisodes = group.Count(),
+                sizeBytes = group.Sum(candidate => candidate.SizeBytes)
+            })
+            .OrderBy(group => group.name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(group => group.id, StringComparer.Ordinal)
+            .ToArray();
+        return new { total = groups.Length, items = groups.Skip(Math.Max(0, skip)).Take(Math.Clamp(limit, 1, 200)) };
+    }
+
+    [Authorize(Policy = Policies.RequiresElevation)]
+    [HttpGet("candidates/series/{id}/episodes")]
+    public ActionResult<object> GetCandidateSeriesEpisodes(string id, [FromQuery] string? reason,
+        [FromQuery] string? q, [FromQuery] int skip = 0)
+    {
+        var candidates = OrderSeriesEpisodes(FilterCandidates(reason, "Episode", q)
+            .Where(candidate => !string.IsNullOrWhiteSpace(candidate.SeriesName) && SeriesKey(candidate) == id)).ToArray();
+        return new { total = candidates.Length, items = candidates.Skip(Math.Max(0, skip)).Take(100).Select(MapCandidate) };
+    }
+
+    [Authorize(Policy = Policies.RequiresElevation)]
+    [HttpPost("candidates/series/{id}/encode")]
+    public ActionResult<object> EncodeCandidateSeries(string id)
+    {
+        var candidates = OrderSeriesEpisodes(FilterCandidates(null, "Episode", null)
+            .Where(candidate => !string.IsNullOrWhiteSpace(candidate.SeriesName) && SeriesKey(candidate) == id)).ToArray();
+        if (candidates.Length == 0)
+        {
+            return NotFound();
+        }
+
+        var queued = _store.EnqueueMany(candidates).Count;
+        return new { matched = candidates.Length, queued };
+    }
+
+    private static IOrderedEnumerable<CandidateRecord> OrderSeriesEpisodes(IEnumerable<CandidateRecord> episodes) =>
+        episodes.OrderBy(candidate => candidate.SeasonNumber ?? int.MaxValue)
+            .ThenBy(candidate => candidate.EpisodeNumber ?? int.MaxValue)
+            .ThenBy(candidate => candidate.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(candidate => candidate.Id, StringComparer.Ordinal);
+
+    internal static string SeriesKey(CandidateRecord candidate)
+    {
+        if (Guid.TryParse(candidate.SeriesId, out var id))
+        {
+            return id.ToString("N");
+        }
+
+        var legacyKey = (candidate.LibraryId + "\n" + candidate.SeriesName).ToUpperInvariant();
+        return "legacy-" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(legacyKey))).ToLowerInvariant();
+    }
+
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpPost("candidates/{id}/encode")]
     public ActionResult<object> EncodeOne(string id)
     {
@@ -465,6 +530,8 @@ public class StreamReadyController : ControllerBase
             itemId = c.ItemId,
             name = c.Name,
             seriesName = c.SeriesName,
+            seasonNumber = c.SeasonNumber,
+            episodeNumber = c.EpisodeNumber,
             itemType = c.ItemType,
             libraryId = c.LibraryId,
             libraryName = c.LibraryName,

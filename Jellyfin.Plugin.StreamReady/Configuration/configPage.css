@@ -2532,3 +2532,25 @@ div#bazarrMappingsValidationResult {
     max-height: 60vh;
     background: #000;
 }
+
+.sr-series-folder {
+    border-bottom: 1px solid var(--sr-border, #56606a);
+    padding: .65rem .5rem;
+}
+
+.sr-series-folder summary {
+    cursor: pointer;
+    padding: .35rem 0;
+}
+
+.sr-series-folder summary span {
+    margin-inline-start: .5rem;
+}
+
+.sr-series-episode {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    padding: .25rem .5rem;
+}

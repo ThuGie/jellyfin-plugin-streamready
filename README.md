@@ -23,6 +23,12 @@ Replacement policy is a setting: backup then replace (recommended), replace in p
 
 If MP4 cannot preserve the selected subtitle tracks, StreamReady tries MKV when your allowed containers include MKV or the container list is unrestricted. Otherwise, the job stops before encoding. Output verification is mandatory before publication.
 
+### Series folders
+
+Choose **Series folders** in Needs Encoding to expand or collapse flagged episodes by
+series. **Encode whole series** queues all flagged episodes in that series, including
+episodes outside the current search, and skips jobs that are already waiting or running.
+
 ### Reviewing replacements
 
 The Replacements tab shows original and encoded sizes and plays short browser-compatible
