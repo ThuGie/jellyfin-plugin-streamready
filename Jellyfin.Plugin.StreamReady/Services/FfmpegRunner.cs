@@ -551,6 +551,8 @@ public class FfmpegRunner
             || stderr.Contains("Impossible to convert between the formats", StringComparison.OrdinalIgnoreCase)
             || stderr.Contains("Function not implemented", StringComparison.OrdinalIgnoreCase)
             || stderr.Contains("Could not open encoder", StringComparison.OrdinalIgnoreCase)
+            || stderr.Contains("Error initializing an internal MFX session", StringComparison.OrdinalIgnoreCase)
+            || stderr.Contains("Error initializing MFX", StringComparison.OrdinalIgnoreCase)
             || stderr.Contains("Error reinitializing filters", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -578,15 +580,15 @@ public class FfmpegRunner
         // -progress pipe:1 is reliable; -loglevel error used to hide classic time= stats (0% forever).
         sb.Append("-nostdin -y -hide_banner -loglevel warning -progress pipe:1 -nostats ");
 
-        var hw = forceSoftware || videoBudget.HasValue || action != EncodeAction.Full
+        var hw = forceSoftware || action != EncodeAction.Full
             ? HardwareAccelerationType.none
             : ResolveHardware(config);
-        var vf = action == EncodeAction.Full ? BuildVideoFilter(config, videoRange) : string.Empty;
+        var vf = action == EncodeAction.Full ? BuildVideoFilter(config, videoRange, source?.Height) : string.Empty;
         var hasSoftwareFilters = !string.IsNullOrEmpty(vf);
         var toneMap = hasSoftwareFilters && vf.Contains("tonemap", StringComparison.OrdinalIgnoreCase);
 
         var (videoEncoder, extra) = action == EncodeAction.Full
-            ? ResolveVideoEncoder(EncodePlanner.DestinationVideoCodec(config), config, hasSoftwareFilters, forceSoftware || videoBudget.HasValue)
+            ? ResolveVideoEncoder(EncodePlanner.DestinationVideoCodec(config), config, hasSoftwareFilters, forceSoftware || (videoBudget.HasValue && hw != HardwareAccelerationType.qsv))
             : (action == EncodeAction.Remux ? "copy" : "copy (video)", string.Empty);
 
         var usingHwEncode = !forceSoftware
@@ -742,7 +744,17 @@ public class FfmpegRunner
                 }
                 else if (videoEncoder.Contains("qsv", StringComparison.OrdinalIgnoreCase))
                 {
-                    sb.Append("-global_quality ").Append(crf).Append(" -pix_fmt nv12 ");
+                    if (videoBudget is long budget)
+                    {
+                        sb.Append("-b:v ").Append(budget).Append(" -maxrate ").Append(budget)
+                            .Append(" -bufsize ").Append(budget * 2).Append(' ');
+                    }
+                    else
+                    {
+                        sb.Append("-global_quality ").Append(crf).Append(' ');
+                    }
+
+                    sb.Append("-pix_fmt nv12 ");
                     pixelFormat = "nv12";
                 }
                 else if (videoEncoder.Contains("vaapi", StringComparison.OrdinalIgnoreCase))
@@ -869,7 +881,7 @@ public class FfmpegRunner
         return BuildEncodePlan(inputPath, outputPath, action, config, videoRange, forceSoftware).Args;
     }
 
-    private string BuildVideoFilter(PluginConfiguration config, string? videoRange)
+    private string BuildVideoFilter(PluginConfiguration config, string? videoRange, int? sourceHeight)
     {
         var filters = new List<string>();
         // Tone-map only when HDR/DV is not in AllowedVideoRanges (keep HDR when user allows it).
@@ -880,7 +892,7 @@ public class FfmpegRunner
             filters.Add("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p");
         }
 
-        if (config.ResolutionCap > 0)
+        if (config.ResolutionCap > 0 && (sourceHeight is null or <= 0 || sourceHeight > config.ResolutionCap))
         {
             filters.Add($"scale=-2:'min(ih,{config.ResolutionCap})'");
         }

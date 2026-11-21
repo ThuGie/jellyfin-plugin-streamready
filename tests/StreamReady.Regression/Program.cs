@@ -47,6 +47,19 @@ var skippedScan = await scanner.ScanAsync(null, CancellationToken.None);
 Check(skippedScan.Status == "disabled" && skippedScan.Found is null && scanner.LastScanUtc is null,
     "A disabled scan returns a skipped outcome without claiming zero matches");
 
+var qsvEncoder = DispatchProxy.Create<IMediaEncoder, FixtureEncoder>();
+var qsvRunner = new FfmpegRunner(qsvEncoder, null!, NullLogger<FfmpegRunner>.Instance);
+var qsvConfig = new PluginConfiguration { HardwareAccel = "qsv", ResolutionCap = 1080 };
+var sizeLimited = qsvRunner.BuildEncodePlan("source.mkv", "output.mkv", EncodeAction.Full,
+    qsvConfig, source: new ProbeInfo { Height = 1080, Streams = { new ProbedStream(0, "video", "h264", true, false, false, null) } }, videoBudget: 8_000_000);
+Check(sizeLimited.VideoEncoder == "h264_qsv" && sizeLimited.Args.Contains("-b:v 8000000 -maxrate 8000000 -bufsize 16000000")
+    && !sizeLimited.Args.Contains("-global_quality") && !sizeLimited.Args.Contains("scale=-2"),
+    "A constrained Quick Sync encode uses bitrate control and skips redundant resizing");
+var cpuFallback = qsvRunner.BuildEncodePlan("source.mkv", "output.mkv", EncodeAction.Full,
+    qsvConfig, forceSoftware: true, videoBudget: 8_000_000);
+Check(cpuFallback.VideoEncoder == "libx264" && cpuFallback.Args.Contains("-b:v 8000000"),
+    "Software fallback preserves the bitrate budget");
+
 var snapshots = Directory.CreateTempSubdirectory("streamready snapshots ");
 try
 {
@@ -207,6 +220,7 @@ public class FixtureEncoder : DispatchProxy
     {
         "get_EncoderPath" => "ffmpeg",
         "get_ProbePath" => "ffprobe",
+        "SupportsHwaccel" => args?[0] as string == "qsv",
         _ => throw new NotSupportedException(targetMethod?.Name)
     };
 }
