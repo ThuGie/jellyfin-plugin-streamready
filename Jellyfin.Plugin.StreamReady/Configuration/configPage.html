@@ -849,7 +849,7 @@
                     var cards = [
                         card(ready ? 'ok' : 'warn', 'movie_filter', 'FFmpeg', ready ? ((version ? 'v' + version + ' · ' : '') + (path || 'ready')) : 'Not found', null),
                         card(ready && hw.indexOf('Software') < 0 ? 'ok' : (ready ? 'warn' : 'warn'), 'memory', 'Hardware', hw, 'encoding'),
-                        card(pick(s, 'autoDirectPreTranscode') ? 'warn' : 'ok', 'tune', 'Mode', pick(s, 'autoDirectPreTranscode') ? 'Auto Direct Pre-Transcode' : 'Manual', null),
+                        card(!pick(s, 'enabled') || pick(s, 'autoDirectPreTranscode') ? 'warn' : 'ok', 'tune', 'Mode', !pick(s, 'enabled') ? 'Disabled' : (pick(s, 'autoDirectPreTranscode') ? 'Auto Direct Pre-Transcode' : 'Manual'), null),
                         card(pick(s, 'configured') ? 'ok' : 'warn', 'video_library', 'Libraries', pick(s, 'configured') ? 'Selected' : 'Select libraries to begin', 'libraries'),
                         card(candidateCount ? 'ok' : 'warn', 'playlist_add_check', 'Needs encoding', String(candidateCount), 'needs'),
                         card(runningCount ? 'warn' : 'ok', 'queue', 'Queue', queuedCount + ' waiting, ' + runningCount + ' running', 'queue'),
@@ -1096,10 +1096,26 @@
                 api('/scan', 'POST').then(function (r) {
                     scanning = false;
                     Dashboard.hideLoadingMsg();
+                    var status = pick(r, 'status');
                     var found = pick(r, 'found');
-                    if (found == null) found = 0;
-                    Dashboard.alert('Scan complete. ' + found + ' file(s) need encoding.');
                     refreshStatus();
+                    if (status === 'disabled') {
+                        Dashboard.alert('Scan skipped. StreamReady is disabled. Enable it in Overview and save to allow scans.');
+                        return;
+                    }
+                    if (status === 'busy') {
+                        Dashboard.alert('A scan is already running. The list will update when it finishes.');
+                        return;
+                    }
+                    if (status === 'noLibraries') {
+                        Dashboard.alert('Scan skipped. Select an available library and save your settings.');
+                        return;
+                    }
+                    if (typeof found !== 'number') {
+                        Dashboard.alert('StreamReady did not return a scan result.');
+                        return;
+                    }
+                    Dashboard.alert('Scan complete. ' + found + ' file(s) need encoding.');
                     showTab('needs');
                     loadCandidates(true);
                 }).catch(function (err) {

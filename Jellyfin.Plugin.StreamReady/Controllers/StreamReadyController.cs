@@ -156,8 +156,8 @@ public class StreamReadyController : ControllerBase
     [HttpPost("scan")]
     public async Task<ActionResult<object>> Scan(CancellationToken cancellationToken)
     {
-        var count = await _scanner.ScanAsync(null, cancellationToken).ConfigureAwait(false);
-        return new { found = count };
+        var result = await _scanner.ScanAsync(null, cancellationToken).ConfigureAwait(false);
+        return new { status = result.Status, found = result.Found };
     }
 
     [Authorize(Policy = Policies.RequiresElevation)]
@@ -184,7 +184,7 @@ public class StreamReadyController : ControllerBase
         var filtered = FilterCandidates(reason, itemType, q).ToList();
         filtered = SortCandidates(filtered, sortBy, sortDir);
         var page = filtered.Skip(skip).Take(limit).Select(MapCandidate).ToList();
-        _logger.LogInformation(
+        _logger.LogDebug(
             "StreamReady candidates: total={Total} skip={Skip} limit={Limit} returned={Returned} reason={Reason} itemType={ItemType} q={Q}",
             filtered.Count,
             skip,

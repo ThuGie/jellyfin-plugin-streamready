@@ -42,6 +42,11 @@ catch (InvalidOperationException ex)
 config.AllowedContainers = "mp4,mkv";
 Check(EncodePlanner.SelectOutputContainer(config, [bitmapSubtitle]) == "mkv", "Try MKV for bitmap subtitles");
 
+var scanner = new LibraryScanner(null!, new CompatibilityAnalyzer(), null!, NullLogger<LibraryScanner>.Instance);
+var skippedScan = await scanner.ScanAsync(null, CancellationToken.None);
+Check(skippedScan.Status == "disabled" && skippedScan.Found is null && scanner.LastScanUtc is null,
+    "A disabled scan returns a skipped outcome without claiming zero matches");
+
 var snapshots = Directory.CreateTempSubdirectory("streamready snapshots ");
 try
 {

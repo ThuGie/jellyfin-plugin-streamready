@@ -7,6 +7,8 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.StreamReady.Services;
 
+public sealed record LibraryScanResult(string Status, int? Found = null);
+
 public class LibraryScanner
 {
     private readonly ILibraryManager _libraryManager;
@@ -33,11 +35,11 @@ public class LibraryScanner
 
     public int LastFound { get; private set; }
 
-    public async Task<int> ScanAsync(IProgress<double>? progress, CancellationToken cancellationToken, bool enqueueIfAuto = true)
+    public async Task<LibraryScanResult> ScanAsync(IProgress<double>? progress, CancellationToken cancellationToken, bool enqueueIfAuto = true)
     {
         if (!await _scanLock.WaitAsync(0, cancellationToken).ConfigureAwait(false))
         {
-            return LastFound;
+            return new("busy");
         }
 
         var started = DateTime.UtcNow;
@@ -47,15 +49,14 @@ public class LibraryScanner
             var config = Plugin.Instance?.Configuration;
             if (config is null || !config.Enabled)
             {
-                return 0;
+                return new("disabled");
             }
 
             var libraries = ResolveLibraries(config);
             if (libraries.Count == 0)
             {
-                _store.ReconcileCandidates([], started);
-                _logger.LogInformation("StreamReady scan skipped: no libraries selected");
-                return 0;
+                _logger.LogInformation("StreamReady scan skipped: no selected libraries could be resolved");
+                return new("noLibraries");
             }
 
             var foundIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -128,7 +129,7 @@ public class LibraryScanner
             LastFound = foundIds.Count;
             _logger.LogInformation("StreamReady scan found {Count} items that need encoding", foundIds.Count);
             progress?.Report(100);
-            return foundIds.Count;
+            return new("completed", foundIds.Count);
         }
         finally
         {
