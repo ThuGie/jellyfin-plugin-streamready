@@ -1029,6 +1029,9 @@
                         if (row.status === 'Queued') {
                             html += '<button type="button" class="raised raised-mini emby-button sr-skip" data-id="' + row.id + '">Skip</button>';
                         }
+                        if (row.status !== 'Running') {
+                            html += '<button type="button" class="raised raised-mini emby-button sr-remove-job" data-id="' + escapeHtml(row.id) + '">Remove</button>';
+                        }
                         if (pick(row, 'canRestore') && pick(row, 'replacementId')) {
                             html += '<button type="button" class="raised raised-mini emby-button sr-restore" data-id="' + pick(row, 'replacementId') + '">Restore</button>';
                         }
@@ -1313,6 +1316,17 @@
 
                     var encode = ev.target.closest('.sr-encode-one');
                     var ignore = ev.target.closest('.sr-ignore-one');
+                    var removeJob = ev.target.closest('.sr-remove-job');
+                    if (removeJob) {
+                        api('/queue/' + encodeURIComponent(removeJob.getAttribute('data-id')), 'DELETE').then(function () {
+                            loadQueue();
+                            refreshStatus();
+                        }).catch(function () {
+                            Dashboard.alert('Could not remove the job. If it is running, cancel it and wait for it to stop.');
+                            loadQueue();
+                        });
+                        return;
+                    }
                     var cancel = ev.target.closest('.sr-cancel');
                     var retry = ev.target.closest('.sr-retry');
                     var skip = ev.target.closest('.sr-skip');

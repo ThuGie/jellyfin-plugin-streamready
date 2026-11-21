@@ -269,7 +269,34 @@ public class JobStore
     {
         lock (_gate)
         {
-            return _state.Queue.Take(limit is int count ? Math.Clamp(count, 1, 500) : int.MaxValue).Select(CloneJob).ToList();
+            return _state.Queue.Where(job => !job.HiddenFromQueue).Take(limit is int count ? Math.Clamp(count, 1, 500) : int.MaxValue).Select(CloneJob).ToList();
+        }
+    }
+
+    public bool RemoveFromQueue(string id)
+    {
+        lock (_gate)
+        {
+            var job = _state.Queue.FirstOrDefault(job => job.Id == id);
+            if (job is null || job.Status == JobStatus.Running)
+            {
+                return false;
+            }
+
+            if (job.HiddenFromQueue)
+            {
+                return true;
+            }
+
+            if (job.Status is JobStatus.Queued or JobStatus.Paused)
+            {
+                job.Status = JobStatus.Cancelled;
+                job.FinishedAt = DateTime.UtcNow;
+            }
+
+            job.HiddenFromQueue = true;
+            SaveLocked();
+            return true;
         }
     }
 
@@ -511,7 +538,7 @@ public class JobStore
         lock (_gate)
         {
             var job = _state.Queue.FirstOrDefault(j => j.Id == id);
-            if (job is null || job.Status is JobStatus.Queued or JobStatus.Done)
+            if (job is null || job.HiddenFromQueue || job.Status is JobStatus.Queued or JobStatus.Done)
             {
                 return false;
             }
@@ -783,6 +810,7 @@ public class JobStore
             EligibleAfterUtc = source.EligibleAfterUtc,
             Phase = source.Status == JobStatus.Running ? source.Phase : null,
             SourceSize = source.SourceSize,
+            HiddenFromQueue = source.HiddenFromQueue,
             StartedAt = source.StartedAt,
             FinishedAt = source.FinishedAt,
             Reasons = [.. source.Reasons],

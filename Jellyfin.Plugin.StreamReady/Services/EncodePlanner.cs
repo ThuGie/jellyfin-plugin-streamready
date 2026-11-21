@@ -120,6 +120,9 @@ public class EncodePlanner
         return container;
     }
 
+    internal static string DestinationSubtitleCodec(string container, string inputCodec) =>
+        container == "mp4" ? "mov_text" : inputCodec == "mov_text" ? "subrip" : inputCodec;
+
     public static string DestinationVideoCodec(PluginConfiguration config)
     {
         return config.EncodingPreset.Equals("HevcCompact", StringComparison.OrdinalIgnoreCase) ? "hevc" : "h264";

@@ -775,6 +775,20 @@ public class FfmpegRunner
             sb.Append("-c:s mov_text ");
         }
 
+        if (mapSubs && destContainer == "mkv" && source is not null)
+        {
+            var subtitleIndex = 0;
+            foreach (var subtitle in source.Streams.Where(stream => stream.Type == "subtitle"))
+            {
+                if (subtitle.Codec == "mov_text")
+                {
+                    sb.Append("-c:s:").Append(subtitleIndex).Append(" srt ");
+                }
+
+                subtitleIndex++;
+            }
+        }
+
         if (destContainer == "mp4"
             || Path.GetExtension(outputPath).Equals(".mp4", StringComparison.OrdinalIgnoreCase))
         {

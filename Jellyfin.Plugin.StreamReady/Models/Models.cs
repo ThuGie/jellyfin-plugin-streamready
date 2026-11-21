@@ -79,6 +79,8 @@ public class EncodeJob
 
     public string Name { get; set; } = string.Empty;
 
+    public bool HiddenFromQueue { get; set; }
+
     public long? SourceSize { get; set; }
 
     public string? Phase { get; set; }

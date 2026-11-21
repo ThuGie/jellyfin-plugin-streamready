@@ -412,7 +412,7 @@ public class EncodeWorker : BackgroundService
                         || Language(pair.First) != Language(pair.Second)
                         || (audio.Count > 1 && pair.First.Default != pair.Second.Default))
                     || subtitles.Zip(outputSubs).Any(pair =>
-                        pair.Second.Codec != (container == "mp4" ? "mov_text" : pair.First.Codec)
+                        pair.Second.Codec != EncodePlanner.DestinationSubtitleCodec(container, pair.First.Codec)
                         || Language(pair.First) != Language(pair.Second) || pair.First.Forced != pair.Second.Forced))
                 {
                     throw new InvalidOperationException("The encoded track metadata does not match the selected tracks.");

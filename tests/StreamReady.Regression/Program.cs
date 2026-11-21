@@ -59,8 +59,13 @@ try
     Check(File.Exists(path + ".legacy"), "Migration preserves original jobs.json");
     Check(store.DequeueNext()?.Id == job.Id, "Claim the queued job");
     Check(!store.Skip(job.Id), "Running jobs cannot be skipped");
+    Check(!store.RemoveFromQueue(job.Id), "Running jobs cannot be removed");
     Check(store.Cancel(job.Id), "Running jobs can be cancelled");
     Check(store.GetJob(job.Id)?.Status == JobStatus.Cancelled, "Cancellation is durable");
+    Check(store.RemoveFromQueue(job.Id) && store.GetQueue().Count == 0, "Remove hides a terminal job");
+    Check(!store.Requeue(job.Id), "A hidden job cannot be retried");
+    var waiting = store.Enqueue(candidate);
+    Check(store.RemoveFromQueue(waiting.Id) && store.DequeueNext() is null, "Removing a waiting job prevents dispatch");
     File.WriteAllText(path, "invalid");
     var recovered = new JobStore(NullLogger<JobStore>.Instance, path);
     Check(recovered.IsHealthy && recovered.GetJob(job.Id) is not null, "Recover from the previous snapshot");
@@ -180,6 +185,13 @@ if (args.Contains("--ffmpeg"))
         Check(full.IsValid && full.Streams.Count(s => s.Type == "audio") == 2, "Full encode preserves both audio tracks");
         Check(full.Streams.Any(s => s.Type == "subtitle" && s.Codec == "mov_text" && s.Language == "eng" && s.Forced),
             "MP4 preserves a text subtitle's language and forced disposition");
+
+        var mkvOutput = Path.Combine(work.FullName, "remuxed file.mkv");
+        await runner.EncodeAsync(fullOutput, mkvOutput, EncodeAction.Remux, config, full.Duration,
+            new Progress<EncodeProgressUpdate>(), CancellationToken.None, source: full);
+        var mkv = await runner.ProbeMediaAsync(mkvOutput, CancellationToken.None);
+        Check(mkv.Streams.Any(s => s.Type == "subtitle" && s.Codec == "subrip" && s.Language == "eng" && s.Forced),
+            "MKV converts mov_text subtitles and preserves language and forced disposition");
     }
     finally
     {

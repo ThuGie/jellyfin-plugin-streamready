@@ -269,6 +269,19 @@ public class StreamReadyController : ControllerBase
     }
 
     [Authorize(Policy = Policies.RequiresElevation)]
+    [HttpDelete("queue/{id}")]
+    public ActionResult RemoveQueueEntry(string id)
+    {
+        if (_store.GetJob(id) is null)
+        {
+            return NotFound();
+        }
+
+        return _store.RemoveFromQueue(id) ? Ok(new { removed = true })
+            : Conflict(new { error = "Cancel the active job and wait for it to stop before removing it." });
+    }
+
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpPost("queue/{id}/cancel")]
     public ActionResult Cancel(string id)
     {
