@@ -12,30 +12,26 @@ public static class EncodeWindow
         }
 
         var now = localNow ?? DateTime.Now;
-        if (!DayAllowed(config.EncodeWindowDays, now.DayOfWeek))
-        {
-            return false;
-        }
-
         if (!TryParseHm(config.EncodeWindowStart, out var start)
             || !TryParseHm(config.EncodeWindowEnd, out var end))
         {
-            return true;
+            return false;
         }
 
         var t = now.TimeOfDay;
         if (start == end)
         {
-            return true;
+            return DayAllowed(config.EncodeWindowDays, now.DayOfWeek);
         }
 
         if (start < end)
         {
-            return t >= start && t < end;
+            return DayAllowed(config.EncodeWindowDays, now.DayOfWeek) && t >= start && t < end;
         }
 
         // Overnight: e.g. 22:00–06:00
-        return t >= start || t < end;
+        return (t >= start && DayAllowed(config.EncodeWindowDays, now.DayOfWeek))
+            || (t < end && DayAllowed(config.EncodeWindowDays, now.AddDays(-1).DayOfWeek));
     }
 
     public static string Describe(PluginConfiguration config)
@@ -43,6 +39,11 @@ public static class EncodeWindow
         if (!config.EncodeWindowEnabled)
         {
             return "Any time";
+        }
+
+        if (!TryParseHm(config.EncodeWindowStart, out _) || !TryParseHm(config.EncodeWindowEnd, out _))
+        {
+            return "Invalid encode window";
         }
 
         var days = string.IsNullOrWhiteSpace(config.EncodeWindowDays)
@@ -62,7 +63,7 @@ public static class EncodeWindow
             .Select(s => int.TryParse(s, out var n) ? n : -1)
             .Where(n => n >= 0 && n <= 6)
             .ToHashSet();
-        return wanted.Count == 0 || wanted.Contains((int)day);
+        return wanted.Contains((int)day);
     }
 
     private static bool TryParseHm(string? value, out TimeSpan time)
@@ -74,7 +75,7 @@ public static class EncodeWindow
         }
 
         var parts = value.Trim().Split(':');
-        if (parts.Length < 2
+        if (parts.Length != 2
             || !int.TryParse(parts[0], out var h)
             || !int.TryParse(parts[1], out var m)
             || h is < 0 or > 23

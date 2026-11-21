@@ -25,15 +25,5 @@ public class ScanLibraryTask : IScheduledTask
         await _scanner.ScanAsync(progress, cancellationToken).ConfigureAwait(false);
     }
 
-    public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
-    {
-        return
-        [
-            new TaskTriggerInfo
-            {
-                Type = TaskTriggerInfoType.IntervalTrigger,
-                IntervalTicks = TimeSpan.FromHours(6).Ticks
-            }
-        ];
-    }
+    public IEnumerable<TaskTriggerInfo> GetDefaultTriggers() => [];
 }

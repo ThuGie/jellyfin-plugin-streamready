@@ -14,14 +14,14 @@ public class CompatibilityAnalyzer
         var effective = EncodePlanner.WithLibraryPreset(config, libraryId);
         var result = new CompatibilityResult();
         var video = item.GetMediaStreams().FirstOrDefault(s => s.Type == MediaStreamType.Video);
-        var audio = item.GetMediaStreams().FirstOrDefault(s => s.Type == MediaStreamType.Audio && s.IsDefault)
-                    ?? item.GetMediaStreams().FirstOrDefault(s => s.Type == MediaStreamType.Audio);
+        var audioStreams = item.GetMediaStreams().Where(s => s.Type == MediaStreamType.Audio).ToArray();
+        var audio = audioStreams.FirstOrDefault(s => s.IsDefault) ?? audioStreams.FirstOrDefault();
 
         var container = NormalizeContainer(item.Container ?? Path.GetExtension(item.Path));
         var videoCodec = NormalizeCodec(video?.Codec);
         var audioCodec = NormalizeCodec(audio?.Codec);
         var range = video?.VideoRangeType.ToString() ?? "Unknown";
-        var size = item.Size ?? SafeLength(item.Path);
+        var size = SafeLength(item.Path);
         var bitrate = video?.BitRate ?? 0;
 
         var allowedContainers = Split(effective.AllowedContainers);
@@ -33,9 +33,15 @@ public class CompatibilityAnalyzer
         var details = new List<string>();
         var containerBad = allowedContainers.Count > 0 && !allowedContainers.Contains(container, StringComparer.OrdinalIgnoreCase);
         var videoBad = !string.IsNullOrEmpty(videoCodec) && allowedVideo.Count > 0 && !allowedVideo.Contains(videoCodec);
-        var audioBad = !string.IsNullOrEmpty(audioCodec) && allowedAudio.Count > 0 && !allowedAudio.Contains(audioCodec);
+        var selectedAudio = effective.KeepAllAudioAndSubtitles ? audioStreams :
+            audio is null ? [] : new[] { audio };
+        var incompatibleAudio = selectedAudio.Select(s => NormalizeCodec(s.Codec))
+            .Where(codec => codec.Length > 0 && allowedAudio.Count > 0 && !allowedAudio.Contains(codec))
+            .Distinct().ToArray();
+        var audioBad = incompatibleAudio.Length > 0;
         var rangeBad = !string.IsNullOrEmpty(range) && allowedRanges.Count > 0 && !RangeAllowed(range, allowedRanges);
         var sizeBad = effective.MaxFileSizeGiB > 0 && size > effective.MaxFileSizeGiB * 1024d * 1024d * 1024d;
+        var resolutionBad = effective.ResolutionCap > 0 && video?.Height > effective.ResolutionCap;
         var bitrateBad = effective.MaxVideoBitrateMbps > 0 && bitrate > effective.MaxVideoBitrateMbps * 1_000_000d;
 
         if (containerBad)
@@ -59,7 +65,7 @@ public class CompatibilityAnalyzer
         if (audioBad)
         {
             reasons.Add("Audio");
-            details.Add($"Audio: {audioCodec} not allowed (allowed: {string.Join(',', allowedAudio)})");
+            details.Add($"Audio: {string.Join(',', incompatibleAudio)} not allowed (allowed: {string.Join(',', allowedAudio)})");
         }
 
         if (sizeBad)
@@ -76,10 +82,16 @@ public class CompatibilityAnalyzer
             details.Add($"Bitrate: {mbps:0.0} Mbps > {effective.MaxVideoBitrateMbps:0.#} Mbps");
         }
 
+        if (resolutionBad)
+        {
+            reasons.Add("Resolution");
+            details.Add($"Resolution: {video?.Height}p exceeds {effective.ResolutionCap}p");
+        }
+
         result.NeedsWork = reasons.Count > 0;
         result.Reasons = reasons;
         result.PlannedAction = EncodePlanner.Decide(
-            videoBad || rangeBad || sizeBad || bitrateBad,
+            videoBad || rangeBad || sizeBad || bitrateBad || resolutionBad,
             audioBad,
             containerBad,
             videoCodec,
@@ -95,6 +107,7 @@ public class CompatibilityAnalyzer
             LibraryId = libraryId,
             LibraryName = libraryName,
             Path = item.Path,
+            SourceWriteUtc = File.GetLastWriteTimeUtc(item.Path),
             SizeBytes = size,
             Container = container,
             VideoCodec = videoCodec,

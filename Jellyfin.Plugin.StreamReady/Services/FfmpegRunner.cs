@@ -181,9 +181,21 @@ public class FfmpegRunner
 
         var args =
             "-v error -show_entries format=duration " +
-            "-show_entries stream=codec_type,codec_name,width,height " +
+            "-show_entries stream=index,codec_type,codec_name,width,height,bit_rate,color_transfer:stream_disposition=default,attached_pic,forced:stream_tags=language " +
             "-of json " + Quote(path);
-        var (exit, stdout, _) = await RunProcessAsync(probe, args, null, null, cancellationToken).ConfigureAwait(false);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        (int exit, string stdout, string _) result;
+        try
+        {
+            result = await RunProcessAsync(probe, args, null, null, timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException("FFprobe exceeded 30 seconds.");
+        }
+
+        var (exit, stdout, _) = result;
         if (exit != 0 || string.IsNullOrWhiteSpace(stdout))
         {
             return info;
@@ -207,9 +219,22 @@ public class FfmpegRunner
                     var type = stream.TryGetProperty("codec_type", out var typeEl)
                         ? typeEl.GetString()
                         : null;
-                    if (string.Equals(type, "video", StringComparison.OrdinalIgnoreCase))
+                    var codec = stream.TryGetProperty("codec_name", out var codecValue) ? codecValue.GetString() : null;
+                    var disposition = stream.TryGetProperty("disposition", out var flags) ? flags : default;
+                    bool HasFlag(string name) => disposition.ValueKind == JsonValueKind.Object
+                        && disposition.TryGetProperty(name, out var flag) && flag.GetInt32() == 1;
+                    var attached = HasFlag("attached_pic");
+                    var language = stream.TryGetProperty("tags", out var tags)
+                        && tags.TryGetProperty("language", out var tag) ? tag.GetString() : null;
+                    info.Streams.Add(new ProbedStream(stream.GetProperty("index").GetInt32(),
+                        type ?? "", codec ?? "", HasFlag("default"), attached, HasFlag("forced"), language));
+                    if (type == "video" && !attached && !info.HasVideo)
                     {
                         info.HasVideo = true;
+                        info.VideoBitrate = stream.TryGetProperty("bit_rate", out var rate)
+                            && long.TryParse(rate.GetString(), out var bits) ? bits : null;
+                        info.ColorTransfer = stream.TryGetProperty("color_transfer", out var transfer)
+                            ? transfer.GetString() : null;
                         if (stream.TryGetProperty("codec_name", out var codecEl))
                         {
                             info.VideoCodec = codecEl.GetString();
@@ -231,6 +256,8 @@ public class FfmpegRunner
                     }
                 }
             }
+
+            info.IsValid = info.HasVideo && info.Duration > 0 && double.IsFinite(info.Duration);
         }
         catch (Exception ex)
         {
@@ -238,6 +265,30 @@ public class FfmpegRunner
         }
 
         return info;
+    }
+
+    public async Task VerifyDecodeAsync(string path, double duration, CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(60));
+        try
+        {
+            foreach (var position in new[] { 0d, Math.Max(0, duration / 2 - 1), Math.Max(0, duration - 2) }.Distinct())
+            {
+                var timestamp = position.ToString("0.###", CultureInfo.InvariantCulture);
+                var arguments = $"-nostdin -v error -xerror -ss {timestamp} -i {Quote(path)} -map 0:V:0 -map 0:a? -t 1 -f null -";
+                var (exit, _, stderr) = await RunProcessAsync(EncoderPath, arguments, null, null, deadline.Token)
+                    .ConfigureAwait(false);
+                if (exit != 0)
+                {
+                    throw new InvalidOperationException($"Encoded sample failed to decode at {timestamp}s. {Truncate(stderr, 1000)}");
+                }
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException("Output decode verification exceeded 60 seconds.");
+        }
     }
 
     public async Task EncodeAsync(
@@ -249,7 +300,9 @@ public class FfmpegRunner
         IProgress<EncodeProgressUpdate> progress,
         CancellationToken cancellationToken,
         string? videoRange = null,
-        Action<EncodePlan>? onPlan = null)
+        Action<EncodePlan>? onPlan = null,
+        ProbeInfo? source = null,
+        long? videoBudget = null)
     {
         var ffmpeg = EncoderPath;
         if (!IsReady)
@@ -257,7 +310,7 @@ public class FfmpegRunner
             throw new InvalidOperationException("FFmpeg is not available. Check Dashboard → Playback → Transcoding.");
         }
 
-        var plan = BuildEncodePlan(inputPath, outputPath, action, config, videoRange, forceSoftware: false);
+        var plan = BuildEncodePlan(inputPath, outputPath, action, config, videoRange, forceSoftware: false, source, videoBudget);
         onPlan?.Invoke(plan);
         _logger.LogInformation(
             "StreamReady encode plan: {Summary} | encoder={Encoder} tonemap={ToneMap} filters={Filters}",
@@ -280,14 +333,14 @@ public class FfmpegRunner
         // QSV + soft filters often fails with auto_scale / ENOSYS on Synology sc-ffmpeg7.
         // Retry once with software decode+encode (libx264/libx265).
         if (action == EncodeAction.Full
-            && ResolveHardware(config) != HardwareAccelerationType.none
+            && plan.HardwareLabel is not ("Software (CPU)" or "copy")
             && LooksLikeHwFilterFailure(stderr))
         {
             _logger.LogWarning(
                 "StreamReady hardware encode failed (exit {Exit}); retrying with software encode. Tail: {Tail}",
                 exit,
                 Truncate(stderr, 500));
-            plan = BuildEncodePlan(inputPath, outputPath, action, config, videoRange, forceSoftware: true);
+            plan = BuildEncodePlan(inputPath, outputPath, action, config, videoRange, forceSoftware: true, source, videoBudget);
             onPlan?.Invoke(plan);
             _logger.LogInformation("StreamReady ffmpeg (software fallback): {Bin} {Args}", ffmpeg, plan.Args);
             ReportProgress(progress, 0.5, null, "retrying…");
@@ -324,21 +377,31 @@ public class FfmpegRunner
         IProgress<EncodeProgressUpdate> progress,
         CancellationToken cancellationToken)
     {
+        using var stall = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var stallLimit = TimeSpan.FromMinutes(10);
+        stall.CancelAfter(stallLimit);
         var tracker = new ProgressTracker(durationSeconds);
         void HandleLine(string line)
         {
             if (tracker.TryHandle(line, out var update))
             {
+                if (!stall.IsCancellationRequested)
+                {
+                    stall.CancelAfter(stallLimit);
+                }
+
                 progress.Report(update);
             }
         }
 
-        return await RunProcessAsync(
-            ffmpeg,
-            args,
-            HandleLine,
-            HandleLine,
-            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await RunProcessAsync(ffmpeg, args, null, HandleLine, stall.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException("FFmpeg reported no progress for ten minutes.");
+        }
     }
 
     private sealed class ProgressTracker
@@ -507,13 +570,15 @@ public class FfmpegRunner
         EncodeAction action,
         PluginConfiguration config,
         string? videoRange = null,
-        bool forceSoftware = false)
+        bool forceSoftware = false,
+        ProbeInfo? source = null,
+        long? videoBudget = null)
     {
         var sb = new StringBuilder();
         // -progress pipe:1 is reliable; -loglevel error used to hide classic time= stats (0% forever).
-        sb.Append("-y -hide_banner -loglevel warning -progress pipe:1 -nostats ");
+        sb.Append("-nostdin -y -hide_banner -loglevel warning -progress pipe:1 -nostats ");
 
-        var hw = forceSoftware || action != EncodeAction.Full
+        var hw = forceSoftware || videoBudget.HasValue || action != EncodeAction.Full
             ? HardwareAccelerationType.none
             : ResolveHardware(config);
         var vf = action == EncodeAction.Full ? BuildVideoFilter(config, videoRange) : string.Empty;
@@ -521,7 +586,7 @@ public class FfmpegRunner
         var toneMap = hasSoftwareFilters && vf.Contains("tonemap", StringComparison.OrdinalIgnoreCase);
 
         var (videoEncoder, extra) = action == EncodeAction.Full
-            ? ResolveVideoEncoder(EncodePlanner.DestinationVideoCodec(config), config, hasSoftwareFilters, forceSoftware)
+            ? ResolveVideoEncoder(EncodePlanner.DestinationVideoCodec(config), config, hasSoftwareFilters, forceSoftware || videoBudget.HasValue)
             : (action == EncodeAction.Remux ? "copy" : "copy (video)", string.Empty);
 
         var usingHwEncode = !forceSoftware
@@ -542,12 +607,43 @@ public class FfmpegRunner
             }
         }
 
+        sb.Append(extra);
         sb.Append("-i ").Append(Quote(inputPath)).Append(' ');
         var keepAll = config.KeepAllAudioAndSubtitles;
-        var destContainer = EncodePlanner.DestinationContainer(config);
+        var destContainer = Path.GetExtension(outputPath).Equals(".mkv", StringComparison.OrdinalIgnoreCase) ? "mkv" : "mp4";
         // MP4 cannot reliably hold PGS/VobSub; mapping all subs + mov_text → ffmpeg exit 234.
-        var mapSubs = keepAll && destContainer == "mkv";
-        if (action == EncodeAction.Remux)
+        var mapSubs = keepAll && (destContainer == "mkv" || source?.Streams.Any(s => s.Type == "subtitle") == true);
+        if (source is not null)
+        {
+            var video = source.Streams.First(s => s.Type == "video" && !s.AttachedPicture);
+            var audio = SelectAudio(source, keepAll);
+            var subtitles = mapSubs ? source.Streams.Where(s => s.Type == "subtitle") : [];
+            var attachments = mapSubs && destContainer == "mkv"
+                ? source.Streams.Where(s => s.Type == "attachment") : [];
+            foreach (var stream in new[] { video }.Concat(audio).Concat(subtitles).Concat(attachments))
+            {
+                sb.Append("-map 0:").Append(stream.Index).Append(' ');
+            }
+
+            var outputIndex = 0;
+            foreach (var stream in new[] { video }.Concat(audio).Concat(subtitles))
+            {
+                var disposition = (stream.Default, stream.Forced) switch
+                {
+                    (true, true) => "default+forced",
+                    (true, false) => "default",
+                    (false, true) => "forced",
+                    _ => "0"
+                };
+                sb.Append("-disposition:").Append(outputIndex++).Append(' ').Append(disposition).Append(' ');
+            }
+
+            if (destContainer == "mkv" && attachments.Any())
+            {
+                sb.Append("-c:t copy ");
+            }
+        }
+        else if (action == EncodeAction.Remux)
         {
             if (destContainer == "mp4")
             {
@@ -575,6 +671,12 @@ public class FfmpegRunner
         var crf = EncodePlanner.DestinationCrf(config);
         var audioBitrate = channels <= 2 ? "192k" : "384k";
         var preset = string.IsNullOrWhiteSpace(config.FfmpegPreset) ? "medium" : config.FfmpegPreset;
+        if (preset is not ("ultrafast" or "superfast" or "veryfast" or "faster" or "fast"
+            or "medium" or "slow" or "slower" or "veryslow" or "placebo"))
+        {
+            throw new InvalidOperationException("Invalid FFmpeg preset.");
+        }
+
         var pixelFormat = string.Empty;
 
         switch (action)
@@ -616,10 +718,20 @@ public class FfmpegRunner
                     vf = "format=nv12,hwupload";
                 }
 
-                sb.Append("-c:v ").Append(videoEncoder).Append(' ').Append(extra);
+                sb.Append("-c:v ").Append(videoEncoder).Append(' ');
                 if (videoEncoder is "libx264" or "libx265")
                 {
-                    sb.Append("-crf ").Append(crf).Append(" -preset ").Append(preset).Append(' ');
+                    if (videoBudget is long budget)
+                    {
+                        sb.Append("-b:v ").Append(budget).Append(" -maxrate ").Append(budget)
+                            .Append(" -bufsize ").Append(budget * 2).Append(' ');
+                    }
+                    else
+                    {
+                        sb.Append("-crf ").Append(crf).Append(' ');
+                    }
+
+                    sb.Append("-preset ").Append(preset).Append(' ');
                     sb.Append("-pix_fmt yuv420p ");
                     pixelFormat = "yuv420p";
                 }
@@ -651,6 +763,16 @@ public class FfmpegRunner
                 }
 
                 break;
+        }
+
+        if (toneMap)
+        {
+            sb.Append("-color_primaries bt709 -color_trc bt709 -colorspace bt709 ");
+        }
+
+        if (mapSubs && destContainer == "mp4")
+        {
+            sb.Append("-c:s mov_text ");
         }
 
         if (destContainer == "mp4"
@@ -716,6 +838,12 @@ public class FfmpegRunner
     }
 
     /// <summary>Kept for callers/tests that only need the argument string.</summary>
+    internal static IReadOnlyList<ProbedStream> SelectAudio(ProbeInfo probe, bool keepAll)
+    {
+        var audio = probe.Streams.Where(s => s.Type == "audio").ToArray();
+        return keepAll ? audio : audio.OrderByDescending(s => s.Default).Take(1).ToArray();
+    }
+
     public string BuildArgs(
         string inputPath,
         string outputPath,
@@ -833,8 +961,13 @@ public class FfmpegRunner
         }
 
         HardwareAccelerationType requested;
-        if (choice.Equals("FollowServer", StringComparison.OrdinalIgnoreCase)
-            || choice.Equals("Auto", StringComparison.OrdinalIgnoreCase))
+        if (choice.Equals("FollowServer", StringComparison.OrdinalIgnoreCase))
+        {
+            return options?.EnableHardwareEncoding == true && EncoderSupports(options.HardwareAccelerationType)
+                ? options.HardwareAccelerationType : HardwareAccelerationType.none;
+        }
+
+        if (choice.Equals("Auto", StringComparison.OrdinalIgnoreCase))
         {
             if (options is not null
                 && options.EnableHardwareEncoding
@@ -986,7 +1119,12 @@ public class FfmpegRunner
     {
         using var process = new Process();
         process.StartInfo.FileName = fileName;
-        process.StartInfo.Arguments = arguments;
+        foreach (Match token in Regex.Matches(arguments, """(?:"((?:\\.|[^"\\])*)"|([^\s"]+))"""))
+        {
+            process.StartInfo.ArgumentList.Add(token.Groups[1].Success
+                ? Regex.Replace(token.Groups[1].Value, """\\(["\\])""", "$1")
+                : token.Groups[2].Value);
+        }
         process.StartInfo.UseShellExecute = false;
         process.StartInfo.CreateNoWindow = true;
         process.StartInfo.RedirectStandardError = true;
@@ -1002,7 +1140,10 @@ public class FfmpegRunner
                 return;
             }
 
-            stdout.AppendLine(e.Data);
+            if (stdout.Length < 2_000_000)
+            {
+                stdout.AppendLine(e.Data);
+            }
             onStdOutLine?.Invoke(e.Data);
         };
         process.ErrorDataReceived += (_, e) =>
@@ -1013,6 +1154,10 @@ public class FfmpegRunner
             }
 
             stderr.AppendLine(e.Data);
+            if (stderr.Length > 32_000)
+            {
+                stderr.Remove(0, stderr.Length - 32_000);
+            }
             onStdErrLine?.Invoke(e.Data);
         };
 
@@ -1031,6 +1176,7 @@ public class FfmpegRunner
         catch (OperationCanceledException)
         {
             TryKill(process);
+            await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
             throw;
         }
 
@@ -1054,6 +1200,6 @@ public class FfmpegRunner
 
     private static string Quote(string value)
     {
-        return "\"" + value.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
+        return "\"" + value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
     }
 }

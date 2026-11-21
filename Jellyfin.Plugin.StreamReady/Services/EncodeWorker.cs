@@ -20,9 +20,18 @@ public class EncodeWorker : BackgroundService
     private readonly ILogger<EncodeWorker> _logger;
     private readonly object _pauseGate = new();
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _settleTimers = new();
-    private CancellationTokenSource? _jobCts;
+    private readonly Dictionary<string, Attempt> _attempts = new();
     private DateTime _lastScanUtc = DateTime.MinValue;
-    private string? _pauseRequeueJobId;
+    private CancellationToken _lifetimeToken;
+
+    private sealed class Attempt(EncodeJob job, CancellationTokenSource cancellation)
+    {
+        public EncodeJob Job { get; } = job;
+        public CancellationTokenSource Cancellation { get; } = cancellation;
+        public Task Task { get; set; } = Task.CompletedTask;
+        public bool Requeue { get; set; }
+        public bool Committing { get; set; }
+    }
 
     public EncodeWorker(
         JobStore store,
@@ -44,46 +53,74 @@ public class EncodeWorker : BackgroundService
 
     public bool IsPaused { get; private set; }
 
-    public EncodeJob? CurrentJob { get; private set; }
+    public IReadOnlyList<EncodeJob> ActiveJobs
+    {
+        get
+        {
+            lock (_pauseGate)
+            {
+                return _attempts.Keys.Select(id => _store.GetJob(id))
+                    .OfType<EncodeJob>().ToArray();
+            }
+        }
+    }
+
+    public EncodeJob? CurrentJob => ActiveJobs.FirstOrDefault();
 
     public void Pause()
     {
-        IsPaused = true;
-        PersistWorkerPaused(true);
-        string? runningId;
         lock (_pauseGate)
         {
-            runningId = CurrentJob?.Id;
-            _pauseRequeueJobId = runningId;
-            _jobCts?.Cancel();
-        }
-
-        if (!string.IsNullOrEmpty(runningId))
-        {
-            _store.Requeue(runningId, "Paused by admin");
+            PersistWorkerPaused(true);
+            IsPaused = true;
+            foreach (var attempt in _attempts.Values.Where(a => !a.Committing && !a.Cancellation.IsCancellationRequested))
+            {
+                attempt.Requeue = true;
+                attempt.Cancellation.Cancel();
+            }
         }
     }
 
     public void Resume()
     {
-        IsPaused = false;
-        PersistWorkerPaused(false);
-        _pauseRequeueJobId = null;
+        lock (_pauseGate)
+        {
+            PersistWorkerPaused(false);
+            IsPaused = false;
+        }
     }
 
-    public void CancelCurrent()
+    public bool Cancel(string id)
     {
         lock (_pauseGate)
         {
-            _jobCts?.Cancel();
+            if (_attempts.TryGetValue(id, out var attempt))
+            {
+                if (attempt.Committing)
+                {
+                    return false;
+                }
+
+                attempt.Requeue = false;
+                attempt.Cancellation.Cancel();
+                return true;
+            }
+
+            return _store.Cancel(id);
         }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _lifetimeToken = stoppingToken;
         IsPaused = Plugin.Instance?.Configuration.WorkerPaused ?? false;
+        if (_store.IsHealthy)
+        {
+            await _replacement.RecoverAsync(stoppingToken).ConfigureAwait(false);
+        }
         _libraryManager.ItemAdded += OnItemChanged;
         _libraryManager.ItemUpdated += OnItemChanged;
+        _libraryManager.ItemRemoved += OnItemRemoved;
         try
         {
             while (!stoppingToken.IsCancellationRequested)
@@ -108,6 +145,7 @@ public class EncodeWorker : BackgroundService
         {
             _libraryManager.ItemAdded -= OnItemChanged;
             _libraryManager.ItemUpdated -= OnItemChanged;
+            _libraryManager.ItemRemoved -= OnItemRemoved;
             foreach (var cts in _settleTimers.Values)
             {
                 try
@@ -122,13 +160,20 @@ public class EncodeWorker : BackgroundService
             }
 
             _settleTimers.Clear();
+            Task[] attempts;
+            lock (_pauseGate)
+            {
+                attempts = _attempts.Values.Select(a => a.Task).ToArray();
+            }
+
+            await Task.WhenAll(attempts).ConfigureAwait(false);
         }
     }
 
     private async Task TickAsync(CancellationToken stoppingToken)
     {
         var config = Plugin.Instance?.Configuration;
-        if (config is null || !config.Enabled)
+        if (config is null || !config.Enabled || !_store.IsHealthy || _replacement.PendingOperation is not null)
         {
             return;
         }
@@ -156,30 +201,31 @@ public class EncodeWorker : BackgroundService
             return;
         }
 
-        var max = Math.Clamp(config.MaxConcurrentJobs, 1, 2);
-        if (_store.RunningCount() >= max)
-        {
-            return;
-        }
-
-        var job = _store.DequeueNext();
-        if (job is null)
-        {
-            return;
-        }
-
-        _ = ProcessJobAsync(job, stoppingToken);
-    }
-
-    private async Task ProcessJobAsync(EncodeJob job, CancellationToken stoppingToken)
-    {
-        using var jobCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         lock (_pauseGate)
         {
-            _jobCts = jobCts;
-            CurrentJob = job;
-        }
+            var max = Math.Clamp(config.MaxConcurrentJobs, 1, 2);
+            if (IsPaused || _attempts.Count >= max)
+            {
+                return;
+            }
 
+            var job = _store.DequeueNext();
+            if (job is null)
+            {
+                return;
+            }
+
+            var attempt = new Attempt(job, CancellationTokenSource.CreateLinkedTokenSource(stoppingToken));
+            _attempts.Add(job.Id, attempt);
+            attempt.Task = Task.Run(() => ProcessJobAsync(attempt, stoppingToken));
+        }
+    }
+
+    private async Task ProcessJobAsync(Attempt attempt, CancellationToken stoppingToken)
+    {
+        var job = attempt.Job;
+        using var jobCts = attempt.Cancellation;
+        string? tempPath = null;
         try
         {
             if (!Guid.TryParse(job.ItemId, out var itemId))
@@ -197,8 +243,7 @@ public class EncodeWorker : BackgroundService
 
             if (IsPlaying(item.Id))
             {
-                _store.Fail(job.Id, "Skipped because the item is currently playing");
-                _store.Requeue(job.Id);
+                _store.Requeue(job.Id, "Waiting for playback", TimeSpan.FromSeconds(30));
                 return;
             }
 
@@ -210,96 +255,134 @@ public class EncodeWorker : BackgroundService
             }
 
             var config = Plugin.Instance!.Configuration;
-            var folders = _libraryManager.GetCollectionFolders(item);
-            var libraryId = folders.FirstOrDefault()?.Id.ToString("N") ?? string.Empty;
-            config = EncodePlanner.WithLibraryPreset(config, libraryId);
-
-            var destExt = "." + EncodePlanner.DestinationContainer(config);
-            var tempPath = sourcePath + ".streamready.tmp" + destExt;
-            if (File.Exists(tempPath))
+            if (!double.IsFinite(config.MaxFileSizeGiB) || config.MaxFileSizeGiB < 0
+                || !double.IsFinite(config.MaxVideoBitrateMbps) || config.MaxVideoBitrateMbps < 0
+                || config.Crf is < 0 or > 51 || config.ResolutionCap < 0 || config.AudioChannels is not (0 or 2 or 6)
+                || config.EncodingPreset is not ("Balanced" or "MaxCompatibility" or "HevcCompact"))
             {
-                File.Delete(tempPath);
+                throw new InvalidOperationException("The encoding settings contain invalid limits or an unsupported preset.");
             }
 
-            var duration = item.RunTimeTicks.HasValue
-                ? TimeSpan.FromTicks(item.RunTimeTicks.Value).TotalSeconds
-                : await _ffmpeg.ProbeDurationAsync(sourcePath, jobCts.Token).ConfigureAwait(false);
+            var library = _scanner.ResolveItemLibrary(item, config)
+                ?? throw new InvalidOperationException("The item's library is no longer selected.");
+            if (!string.Equals(job.Path, sourcePath,
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
+                || (job.SourceWriteUtc is not null && job.SourceWriteUtc != File.GetLastWriteTimeUtc(sourcePath)))
+            {
+                throw new InvalidOperationException("The queued source changed. Scan again before enqueuing it.");
+            }
+
+            config = EncodePlanner.WithLibraryPreset(config, library.Id.ToString("N"));
+
+            var sourceFile = new FileInfo(sourcePath);
+            var sourceLength = sourceFile.Length;
+            if (job.SourceSize is long expectedSize && expectedSize != sourceLength)
+            {
+                throw new InvalidOperationException("The queued source size changed. Scan again before enqueuing it.");
+            }
+            var sourceWrite = sourceFile.LastWriteTimeUtc;
+            var sourceProbe = await _ffmpeg.ProbeMediaAsync(sourcePath, jobCts.Token).ConfigureAwait(false);
+            if (!sourceProbe.IsValid)
+            {
+                throw new InvalidOperationException("Source media could not be verified by FFprobe.");
+            }
+
+            var subtitles = config.KeepAllAudioAndSubtitles
+                ? sourceProbe.Streams.Where(s => s.Type == "subtitle").ToArray() : [];
+            var container = EncodePlanner.SelectOutputContainer(config, subtitles);
+
+            tempPath = sourcePath + "." + Guid.NewGuid().ToString("N") + ".streamready.tmp." + container;
+            var duration = sourceProbe.Duration;
+            var video = sourceProbe.Streams.First(s => s.Type == "video" && !s.AttachedPicture);
+            var audio = FfmpegRunner.SelectAudio(sourceProbe, config.KeepAllAudioAndSubtitles);
+            var fresh = _scanner.Analyze(item, config, library.Id, library.Name);
+            if (!fresh.NeedsWork)
+            {
+                throw new InvalidOperationException("The source no longer requires encoding under the current profile.");
+            }
+
+            var action = fresh.PlannedAction;
+            long? videoBudget = null;
+            if (fresh.Reasons.Contains("Size"))
+            {
+                var audioOverhead = audio.Count * (EncodePlanner.DestinationAudioChannels(config) <= 2 ? 192_000 : 384_000);
+                videoBudget = (long)(config.MaxFileSizeGiB * 1073741824d * 8 * 0.95 / duration) - audioOverhead;
+                if (videoBudget < 100_000)
+                {
+                    throw new InvalidOperationException("The file-size cap leaves an infeasible video bitrate budget.");
+                }
+            }
+
+            if (fresh.Reasons.Contains("Bitrate") || (config.MaxVideoBitrateMbps > 0 && action == EncodeAction.Full))
+            {
+                var cap = (long)(config.MaxVideoBitrateMbps * 950_000d);
+                videoBudget = Math.Min(videoBudget ?? cap, cap);
+            }
+            if (!EncodePlanner.ContainerSupportsVideo(container, video.Codec))
+            {
+                action = EncodeAction.Full;
+            }
+            else if (action == EncodeAction.Remux && audio.Any(s => !EncodePlanner.ContainerSupportsAudio(container, s.Codec)))
+            {
+                action = EncodeAction.AudioOnly;
+            }
 
             var progress = new Progress<EncodeProgressUpdate>(update =>
-            {
-                _store.UpdateProgress(
-                    job.Id,
-                    update.Percent,
-                    update.Speed,
-                    update.Eta,
-                    allowDecrease: update.Percent <= 1);
-                if (CurrentJob?.Id != job.Id)
-                {
-                    return;
-                }
+                _store.UpdateProgress(job.Id, Math.Min(95, update.Percent), update.Speed, update.Eta,
+                    allowDecrease: update.Percent <= 1));
+            void ApplyPlan(EncodePlan plan) => _store.UpdateEncodePlan(job.Id, plan);
 
-                if (update.Percent <= 1 || update.Percent >= CurrentJob.Progress)
-                {
-                    CurrentJob.Progress = update.Percent;
-                }
-
-                if (update.Speed is not null)
-                {
-                    CurrentJob.Speed = update.Speed;
-                }
-
-                if (update.Eta is not null || update.Percent <= 1 || update.Percent >= 100)
-                {
-                    CurrentJob.Eta = update.Eta;
-                }
-            });
-
-            void ApplyPlan(EncodePlan plan)
-            {
-                _store.UpdateEncodePlan(job.Id, plan);
-                if (CurrentJob?.Id != job.Id)
-                {
-                    return;
-                }
-
-                CurrentJob.StatusDetail = plan.SoftFallback ? "[software fallback] " + plan.Summary : plan.Summary;
-                CurrentJob.VideoEncoder = plan.VideoEncoder;
-                CurrentJob.HardwarePath = plan.HardwareLabel + " · decode " + plan.DecodeMode;
-                CurrentJob.ToneMap = plan.ToneMap;
-                CurrentJob.Filters = plan.Filters;
-            }
-
-            var videoRange = job.VideoRange;
+            var videoRange = fresh.Candidate.VideoRange;
             if (string.IsNullOrWhiteSpace(videoRange)
                 && job.Reasons.Any(r => r.Equals("VideoRange", StringComparison.OrdinalIgnoreCase)))
             {
                 videoRange = "HDR";
             }
 
+            var allowedVideo = CompatibilityAnalyzer.Split(config.AllowedVideoCodecs)
+                .Select(CompatibilityAnalyzer.NormalizeCodec).ToArray();
+            var allowedAudio = CompatibilityAnalyzer.Split(config.AllowedAudioCodecs)
+                .Select(CompatibilityAnalyzer.NormalizeCodec).ToArray();
+            var expectedVideo = action == EncodeAction.Full ? EncodePlanner.DestinationVideoCodec(config) : video.Codec;
+            if ((allowedVideo.Length > 0 && !allowedVideo.Contains(expectedVideo))
+                || (allowedAudio.Length > 0 && audio.Any(track => !allowedAudio.Contains(
+                    action == EncodeAction.Remux ? track.Codec : "aac"))))
+            {
+                throw new InvalidOperationException("The selected output codecs conflict with the compatibility profile.");
+            }
+
+            if (action == EncodeAction.Full
+                && (sourceProbe.ColorTransfer is "smpte2084" or "arib-std-b67"
+                    || fresh.Reasons.Contains("VideoRange")))
+            {
+                var range = fresh.Candidate.VideoRange;
+                if (range.Contains("DOVI", StringComparison.OrdinalIgnoreCase)
+                    || range.Contains("Dolby", StringComparison.OrdinalIgnoreCase)
+                    || !config.ToneMapHdr || CompatibilityAnalyzer.RangeAllowed(range, config.AllowedVideoRanges)
+                    || !CompatibilityAnalyzer.RangeAllowed("SDR", config.AllowedVideoRanges))
+                {
+                    throw new InvalidOperationException("The requested HDR or Dolby Vision conversion could not be validated.");
+                }
+            }
+
+            _store.UpdatePhase(job.Id, "Encoding");
             await _ffmpeg.EncodeAsync(
                     sourcePath,
                     tempPath,
-                    job.Action,
+                    action,
                     config,
                     duration,
                     progress,
                     jobCts.Token,
                     videoRange,
-                    ApplyPlan)
+                    ApplyPlan,
+                    sourceProbe,
+                    videoBudget)
                 .ConfigureAwait(false);
 
-            if (_store.IsCancelled(job.Id) || jobCts.IsCancellationRequested)
-            {
-                TryDelete(tempPath);
-                if (_pauseRequeueJobId == job.Id)
-                {
-                    _pauseRequeueJobId = null;
-                }
+            jobCts.Token.ThrowIfCancellationRequested();
+            _store.UpdatePhase(job.Id, "Verifying");
 
-                return;
-            }
-
-            if (config.VerifyBeforeReplace)
             {
                 var probe = await _ffmpeg.ProbeMediaAsync(tempPath, jobCts.Token).ConfigureAwait(false);
                 if (!File.Exists(tempPath) || probe.SizeBytes < 1024)
@@ -309,14 +392,42 @@ public class EncodeWorker : BackgroundService
                     return;
                 }
 
-                if (!probe.HasVideo)
+                if (!probe.IsValid || probe.Streams.Count(s => s.Type == "audio") != audio.Count
+                    || probe.Streams.Count(s => s.Type == "subtitle") != subtitles.Length)
                 {
                     TryDelete(tempPath);
                     _store.Fail(
                         job.Id,
-                        "Output has no video stream",
+                        "Output duration or selected stream counts could not be verified",
                         $"probe size={probe.SizeBytes} duration={probe.Duration:0.###} hasAudio={probe.HasAudio}");
                     return;
+                }
+
+                var outputAudio = probe.Streams.Where(stream => stream.Type == "audio").ToArray();
+                var outputSubs = probe.Streams.Where(stream => stream.Type == "subtitle").ToArray();
+                static string? Language(ProbedStream stream) => stream.Language is null or "und" ? null : stream.Language;
+
+                if (audio.Zip(outputAudio).Any(pair =>
+                        pair.Second.Codec != (action == EncodeAction.Remux ? pair.First.Codec : "aac")
+                        || Language(pair.First) != Language(pair.Second)
+                        || (audio.Count > 1 && pair.First.Default != pair.Second.Default))
+                    || subtitles.Zip(outputSubs).Any(pair =>
+                        pair.Second.Codec != (container == "mp4" ? "mov_text" : pair.First.Codec)
+                        || Language(pair.First) != Language(pair.Second) || pair.First.Forced != pair.Second.Forced))
+                {
+                    throw new InvalidOperationException("The encoded track metadata does not match the selected tracks.");
+                }
+
+                if (probe.VideoCodec != expectedVideo
+                    || (action == EncodeAction.Full && probe.ColorTransfer is "smpte2084" or "arib-std-b67")
+                    || (action == EncodeAction.Full && (sourceProbe.ColorTransfer is "smpte2084" or "arib-std-b67")
+                        && probe.ColorTransfer != "bt709")
+                    || (config.ResolutionCap > 0 && probe.Height > config.ResolutionCap)
+                    || (config.MaxFileSizeGiB > 0 && probe.SizeBytes > config.MaxFileSizeGiB * 1073741824d)
+                    || (config.MaxVideoBitrateMbps > 0 && (probe.VideoBitrate
+                        ?? (long)Math.Ceiling(probe.SizeBytes * 8d / probe.Duration)) > config.MaxVideoBitrateMbps * 1_000_000d))
+                {
+                    throw new InvalidOperationException("The output does not satisfy the configured codec, resolution, size, or bitrate limits.");
                 }
 
                 if (probe.Width <= 0 || probe.Height <= 0)
@@ -343,11 +454,9 @@ public class EncodeWorker : BackgroundService
                     }
                 }
             }
-            else if (!File.Exists(tempPath) || new FileInfo(tempPath).Length < 1024)
+            if (!string.Equals(config.ReplacementPolicy, "Sidecar", StringComparison.OrdinalIgnoreCase))
             {
-                TryDelete(tempPath);
-                _store.Fail(job.Id, "Output file is missing or too small");
-                return;
+                await _ffmpeg.VerifyDecodeAsync(tempPath, duration, jobCts.Token).ConfigureAwait(false);
             }
 
             if (config.DiscardIfOutputLarger && File.Exists(tempPath) && File.Exists(sourcePath))
@@ -367,43 +476,41 @@ public class EncodeWorker : BackgroundService
             if (IsPlaying(item.Id))
             {
                 TryDelete(tempPath);
-                _store.Fail(job.Id, "Playback started during encode; file was not replaced");
-                _store.Requeue(job.Id);
+                _store.Requeue(job.Id, "Waiting for playback", TimeSpan.FromSeconds(30));
                 return;
             }
 
-            var commit = await _replacement.CommitAsync(item, sourcePath, tempPath, config, jobCts.Token)
-                .ConfigureAwait(false);
-            var finalPath = commit.FinalPath;
-            var finalSize = File.Exists(finalPath) ? new FileInfo(finalPath).Length : 0;
-            var replacement = new ReplacementRecord
+            await _replacement.CommitAsync(item, job.Id, sourcePath, tempPath, config, () =>
             {
-                ItemId = job.ItemId,
-                Name = job.Name,
-                OriginalPath = commit.OriginalPath,
-                FinalPath = commit.FinalPath,
-                BackupPath = commit.BackupPath,
-                Policy = commit.Policy,
-                ReplacedAt = DateTime.UtcNow
-            };
-            _store.Complete(job.Id, job.ItemId, finalPath, finalSize, replacement);
-            _logger.LogInformation(
-                "StreamReady finished {Name} -> {Path} (policy={Policy}, backup={Backup})",
-                item.Name,
-                finalPath,
-                commit.Policy,
-                commit.BackupPath ?? "(none)");
+                lock (_pauseGate)
+                {
+                    jobCts.Token.ThrowIfCancellationRequested();
+                    attempt.Committing = true;
+                    _store.UpdatePhase(job.Id, "Committing");
+                }
+
+                var source = new FileInfo(sourcePath);
+                if (Plugin.Instance?.Configuration is not { Enabled: true } currentConfig
+                    || _scanner.ResolveItemLibrary(item, currentConfig)?.Id != library.Id
+                    || IsPlaying(item.Id) || !source.Exists || source.Length != sourceLength
+                    || source.LastWriteTimeUtc != sourceWrite)
+                {
+                    throw new InvalidOperationException("The source changed or playback began before promotion.");
+                }
+            }, replacement => _store.Complete(job.Id, job.ItemId,
+                replacement.Policy == "Sidecar" ? sourcePath : replacement.FinalPath,
+                replacement.Policy == "Sidecar" ? sourceLength : replacement.FinalSize!.Value,
+                replacement), jobCts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
-            if (_pauseRequeueJobId == job.Id)
+            if (attempt.Requeue || stoppingToken.IsCancellationRequested)
             {
-                _pauseRequeueJobId = null;
-                // Already requeued in Pause().
+                _store.Requeue(job.Id, "Interrupted before promotion");
             }
             else
             {
-                _store.Fail(job.Id, "Cancelled");
+                _store.Cancel(job.Id);
             }
         }
         catch (Exception ex)
@@ -415,24 +522,42 @@ public class EncodeWorker : BackgroundService
                 shortMsg = shortMsg[..280] + "…";
             }
 
-            _store.Fail(job.Id, shortMsg, TruncateDetail(ex.Message, 8000));
+            if (_store.IsHealthy)
+            {
+                _store.Fail(job.Id, shortMsg, TruncateDetail(ex.Message, 8000));
+            }
         }
         finally
         {
-            lock (_pauseGate)
+            try
             {
-                if (CurrentJob?.Id == job.Id)
+                if (tempPath is not null && _replacement.PendingOperation is null)
                 {
-                    CurrentJob = null;
-                }
-
-                if (_jobCts == jobCts)
-                {
-                    _jobCts = null;
+                    TryDelete(tempPath);
                 }
             }
+            finally
+            {
+                lock (_pauseGate)
+                {
+                    _attempts.Remove(job.Id);
+                }
+            }
+        }
+    }
 
-            _store.Persist();
+    private void OnItemRemoved(object? sender, ItemChangeEventArgs e)
+    {
+        if (e.Item is Video && _store.IsHealthy)
+        {
+            try
+            {
+                _store.RemoveCandidate(e.Item.Id.ToString("N"));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not remove a deleted StreamReady candidate");
+            }
         }
     }
 
@@ -466,13 +591,14 @@ public class EncodeWorker : BackgroundService
                 }
             }
 
-            var cts = new CancellationTokenSource();
+            var cts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeToken);
+            var token = cts.Token;
             _settleTimers[id] = cts;
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(delay), cts.Token).ConfigureAwait(false);
+                    await Task.Delay(TimeSpan.FromSeconds(delay), token).ConfigureAwait(false);
                     if (cts.IsCancellationRequested)
                     {
                         return;
@@ -494,7 +620,7 @@ public class EncodeWorker : BackgroundService
                 }
                 finally
                 {
-                    _settleTimers.TryRemove(id, out _);
+                    _settleTimers.TryRemove(new KeyValuePair<Guid, CancellationTokenSource>(id, cts));
                     cts.Dispose();
                 }
             });

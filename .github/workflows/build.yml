@@ -9,15 +9,39 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
+  regression:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+      - name: Install FFmpeg on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Regression checks
+        shell: bash
+        run: |
+          args=()
+          if [ "$RUNNER_OS" = "Linux" ]; then args+=(--ffmpeg); fi
+          dotnet run --project tests/StreamReady.Regression -c Release -- "${args[@]}"
+
   build:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.pkg.outputs.version }}
+      checksum: ${{ steps.pkg.outputs.checksum }}
+      zip_name: ${{ steps.pkg.outputs.zip_name }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,13 +68,33 @@ jobs:
           name: jellyfin-plugin-streamready
           path: artifacts/pkg/*.zip
 
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, regression]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: streamready-catalog
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: jellyfin-plugin-streamready
+          path: artifacts/pkg
+
       - name: Verify tag matches assembly version
         if: startsWith(github.ref, 'refs/tags/v')
         env:
-          VERSION: ${{ steps.pkg.outputs.version }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME#v}"
+          python3 -m zipfile -t artifacts/pkg/*.zip
+          test "$(md5sum artifacts/pkg/*.zip | cut -d ' ' -f 1)" = "${{ needs.build.outputs.checksum }}"
           if [ "$TAG" != "$VERSION" ]; then
             echo "Tag $GITHUB_REF_NAME does not match AssemblyVersion $VERSION"
             exit 1
@@ -60,7 +104,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.pkg.outputs.version }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
           TITLE="StreamReady ${VERSION}"
@@ -77,9 +121,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.pkg.outputs.version }}
-          CHECKSUM: ${{ steps.pkg.outputs.checksum }}
-          ZIP_NAME: ${{ steps.pkg.outputs.zip_name }}
+          VERSION: ${{ needs.build.outputs.version }}
+          CHECKSUM: ${{ needs.build.outputs.checksum }}
+          ZIP_NAME: ${{ needs.build.outputs.zip_name }}
         run: |
           set -euo pipefail
           SOURCE_URL="https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}/${ZIP_NAME}"

@@ -1,5 +1,6 @@
 using Jellyfin.Plugin.StreamReady.Models;
 using Jellyfin.Plugin.StreamReady.Services;
+using MediaBrowser.Common.Api;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -64,7 +65,7 @@ public class StreamReadyController : ControllerBase
         return File(stream, "image/png");
     }
 
-    [Authorize]
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpGet("status")]
     public ActionResult<object> GetStatus()
     {
@@ -85,6 +86,8 @@ public class StreamReadyController : ControllerBase
             _scanner.LastFound);
         return new
         {
+            storeHealthy = _store.IsHealthy,
+            pendingMediaOperation = _replacement.PendingOperation,
             enabled = config?.Enabled ?? false,
             autoDirectPreTranscode = config?.AutoDirectPreTranscode ?? false,
             configured = !string.IsNullOrWhiteSpace(config?.SelectedLibraryIds),
@@ -102,6 +105,7 @@ public class StreamReadyController : ControllerBase
             encodeWindowEnabled = config?.EncodeWindowEnabled ?? false,
             encodeWindowOpen = config is null || EncodeWindow.IsOpen(config),
             encodeWindowLabel = config is null ? "Any time" : EncodeWindow.Describe(config),
+            activeJobs = _worker.ActiveJobs.Select(MapJob),
             currentJob = current is null
                 ? null
                 : new
@@ -126,14 +130,14 @@ public class StreamReadyController : ControllerBase
     /// <summary>
     /// Pre-Transcode-style capabilities (PascalCase) for UI debugging / readiness.
     /// </summary>
-    [Authorize]
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpGet("Capabilities")]
     public ActionResult<object> GetCapabilities()
     {
         return _ffmpeg.GetCapabilitiesSnapshot(Plugin.Instance?.Configuration);
     }
 
-    [Authorize]
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpGet("libraries")]
     public ActionResult<object> GetLibraries()
     {
@@ -148,7 +152,7 @@ public class StreamReadyController : ControllerBase
         return folders;
     }
 
-    [Authorize]
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpPost("scan")]
     public async Task<ActionResult<object>> Scan(CancellationToken cancellationToken)
     {
@@ -156,7 +160,7 @@ public class StreamReadyController : ControllerBase
         return new { found = count };
     }
 
-    [Authorize]
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpGet("candidates")]
     public ActionResult<object> GetCandidates(
         [FromQuery] string? reason,
@@ -198,7 +202,7 @@ public class StreamReadyController : ControllerBase
         };
     }
 
-    [Authorize]
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpPost("candidates/{id}/encode")]
     public ActionResult<object> EncodeOne(string id)
     {
@@ -208,27 +212,34 @@ public class StreamReadyController : ControllerBase
             return NotFound();
         }
 
+        if (candidate.Ignored)
+        {
+            return Conflict(new { error = "This candidate is ignored." });
+        }
+
         var job = _store.Enqueue(candidate);
-        _worker.Resume();
         return MapJob(job);
     }
 
-    [Authorize]
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpPost("candidates/encode")]
     public ActionResult<object> EncodeMany([FromBody] IdListRequest request)
     {
         var ids = request.Ids ?? [];
+        if (ids.Count > 2000)
+        {
+            return BadRequest(new { error = "At most 2000 candidates may be queued at once." });
+        }
         var candidates = ids
             .Select(id => _store.GetCandidate(id))
             .Where(c => c is not null)
             .Cast<CandidateRecord>()
             .ToList();
         var jobs = _store.EnqueueMany(candidates);
-        _worker.Resume();
         return new { queued = jobs.Count };
     }
 
-    [Authorize]
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpPost("candidates/encodeMatching")]
     public ActionResult<object> EncodeMatching(
         [FromQuery] string? reason,
@@ -239,11 +250,10 @@ public class StreamReadyController : ControllerBase
             .Take(2000)
             .ToList();
         var jobs = _store.EnqueueMany(matching);
-        _worker.Resume();
         return new { queued = jobs.Count, matched = matching.Count, capped = matching.Count >= 2000 };
     }
 
-    [Authorize]
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpPost("candidates/{id}/ignore")]
     public ActionResult Ignore(string id)
     {
@@ -251,44 +261,44 @@ public class StreamReadyController : ControllerBase
         return Ok();
     }
 
-    [Authorize]
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpGet("queue")]
-    public ActionResult<object> GetQueue()
+    public ActionResult<object> GetQueue([FromQuery] int? limit = null)
     {
-        return _store.GetQueue().Select(MapJob).ToList();
+        return _store.GetQueue(limit).Select(MapJob).ToList();
     }
 
-    [Authorize]
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpPost("queue/{id}/cancel")]
     public ActionResult Cancel(string id)
     {
-        var running = _store.Cancel(id);
-        if (running && _worker.CurrentJob?.Id == id)
-        {
-            _worker.CancelCurrent();
-        }
-
-        return Ok();
+        if (_store.GetJob(id) is null) return NotFound();
+        return _worker.Cancel(id) ? Ok() : Conflict(new { error = "Job cannot be cancelled." });
     }
 
-    [Authorize]
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpPost("queue/{id}/retry")]
     public ActionResult Retry(string id)
     {
-        _store.Requeue(id);
-        _worker.Resume();
-        return Ok();
+        var job = _store.GetJob(id);
+        if (job is null)
+        {
+            return NotFound();
+        }
+
+        return job.Status is JobStatus.Failed or JobStatus.Cancelled or JobStatus.Skipped && _store.Requeue(id)
+            ? Ok() : Conflict(new { error = "Job cannot be retried." });
     }
 
-    [Authorize]
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpPost("queue/{id}/skip")]
     public ActionResult Skip(string id)
     {
-        _store.Skip(id);
-        return Ok();
+        if (_store.GetJob(id) is null) return NotFound();
+        return _store.Skip(id) ? Ok() : Conflict(new { error = "Only queued jobs can be skipped." });
     }
 
-    [Authorize]
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpPost("worker/pause")]
     public ActionResult Pause()
     {
@@ -296,7 +306,7 @@ public class StreamReadyController : ControllerBase
         return Ok();
     }
 
-    [Authorize]
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpPost("worker/resume")]
     public ActionResult Resume()
     {
@@ -304,14 +314,14 @@ public class StreamReadyController : ControllerBase
         return Ok();
     }
 
-    [Authorize]
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpGet("replacements")]
-    public ActionResult<object> GetReplacements()
+    public ActionResult<object> GetReplacements([FromQuery] int? limit = null)
     {
-        return _store.GetReplacements().Select(MapReplacement).ToList();
+        return _store.GetReplacements(limit: limit).Select(MapReplacement).ToList();
     }
 
-    [Authorize]
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpPost("replacements/{id}/restore")]
     public async Task<ActionResult> RestoreReplacement(string id, CancellationToken cancellationToken)
     {
@@ -324,13 +334,12 @@ public class StreamReadyController : ControllerBase
         try
         {
             await _replacement.RestoreAsync(record, cancellationToken).ConfigureAwait(false);
-            _store.MarkRestored(id);
             return Ok(new { restored = true, id });
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "StreamReady restore failed for {Id}", id);
-            return BadRequest(new { error = ex.Message });
+            return Conflict(new { error = ex.Message });
         }
     }
 
@@ -425,6 +434,8 @@ public class StreamReadyController : ControllerBase
             path = j.Path,
             action = j.Action.ToString(),
             status = j.Status.ToString(),
+            phase = j.Phase,
+            eligibleAfterUtc = j.EligibleAfterUtc,
             progress = j.Progress,
             error = j.Error,
             errorDetail = j.ErrorDetail,
@@ -462,7 +473,7 @@ public class StreamReadyController : ControllerBase
             policy = r.Policy,
             replacedAt = r.ReplacedAt,
             restored = r.Restored,
-            canRestore = !r.Restored && (
+            canRestore = !r.Restored && r.FinalSize is not null && r.FinalWriteUtc is not null && (
                 string.Equals(r.Policy, "Sidecar", StringComparison.OrdinalIgnoreCase)
                 || (!string.IsNullOrWhiteSpace(r.BackupPath) && System.IO.File.Exists(r.BackupPath)))
         };

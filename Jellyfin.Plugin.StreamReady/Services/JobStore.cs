@@ -8,6 +8,7 @@ namespace Jellyfin.Plugin.StreamReady.Services;
 public class JobStore
 {
     private readonly ILogger<JobStore> _logger;
+    private readonly string? _explicitStorePath;
     private readonly object _gate = new();
     private JobStoreState _state = new();
     private readonly JsonSerializerOptions _json = new()
@@ -16,9 +17,23 @@ public class JobStore
         Converters = { new JsonStringEnumConverter() }
     };
 
-    public JobStore(ILogger<JobStore> logger)
+    private const int SchemaVersion = 1;
+    private string? _committedJson;
+    private bool _healthy = true;
+
+    public bool IsHealthy
+    {
+        get { lock (_gate) { return _healthy; } }
+    }
+
+    public JobStore(ILogger<JobStore> logger) : this(logger, null)
+    {
+    }
+
+    internal JobStore(ILogger<JobStore> logger, string? storePath)
     {
         _logger = logger;
+        _explicitStorePath = storePath;
         Load();
     }
 
@@ -55,32 +70,58 @@ public class JobStore
     {
         lock (_gate)
         {
-            foreach (var incoming in candidates)
+            foreach (var candidate in candidates)
             {
-                var existing = _state.Candidates.FirstOrDefault(c => c.Id == incoming.Id);
-                if (existing is null)
-                {
-                    _state.Candidates.Add(incoming);
-                    continue;
-                }
-
-                var ignored = existing.Ignored;
-                incoming.Ignored = ignored;
-                incoming.AddedAt = existing.AddedAt;
-                var index = _state.Candidates.IndexOf(existing);
-                _state.Candidates[index] = incoming;
+                UpsertCandidateLocked(candidate);
             }
 
             SaveLocked();
         }
     }
 
-    public void RemoveCandidatesNotIn(HashSet<string> ids)
+    public void ReconcileCandidates(IEnumerable<CandidateRecord> candidates, DateTime scanStarted)
     {
         lock (_gate)
         {
-            _state.Candidates.RemoveAll(c => !c.Ignored && !ids.Contains(c.Id));
+            var incoming = candidates.GroupBy(candidate => candidate.Id).ToDictionary(group => group.Key, group => group.First());
+            _state.Candidates.RemoveAll(candidate => !candidate.Ignored && candidate.ObservedAt <= scanStarted
+                && !incoming.ContainsKey(candidate.Id));
+            var newer = _state.Candidates.Where(candidate => candidate.ObservedAt > scanStarted)
+                .Select(candidate => candidate.Id).ToHashSet();
+            foreach (var candidate in incoming.Values.Where(candidate => !newer.Contains(candidate.Id)))
+            {
+                candidate.ObservedAt = scanStarted;
+                UpsertCandidateLocked(candidate);
+            }
+
             SaveLocked();
+        }
+    }
+
+    private void UpsertCandidateLocked(CandidateRecord incoming)
+    {
+        var index = _state.Candidates.FindIndex(candidate => candidate.Id == incoming.Id);
+        var clone = CloneCandidate(incoming);
+        if (index < 0)
+        {
+            _state.Candidates.Add(clone);
+            return;
+        }
+
+        var existing = _state.Candidates[index];
+        clone.Ignored = existing.Ignored;
+        clone.AddedAt = existing.AddedAt;
+        _state.Candidates[index] = clone;
+    }
+
+    public void RemoveCandidate(string id)
+    {
+        lock (_gate)
+        {
+            if (_state.Candidates.RemoveAll(c => c.Id == id && !c.Ignored) > 0)
+            {
+                SaveLocked();
+            }
         }
     }
 
@@ -99,14 +140,14 @@ public class JobStore
         }
     }
 
-    public bool IsProcessed(string itemId, string path, long sizeBytes)
+    public bool IsProcessed(string itemId, string path, long sizeBytes, DateTime writeUtc)
     {
         lock (_gate)
         {
             return _state.Processed.Any(p =>
                 p.ItemId == itemId &&
                 string.Equals(p.Path, path, StringComparison.OrdinalIgnoreCase) &&
-                p.SizeBytes == sizeBytes);
+                p.SizeBytes == sizeBytes && p.WriteUtc == writeUtc);
         }
     }
 
@@ -124,6 +165,11 @@ public class JobStore
     {
         lock (_gate)
         {
+            if (_state.Candidates.Any(c => c.Id == candidate.Id && c.Ignored))
+            {
+                throw new InvalidOperationException("This candidate is ignored.");
+            }
+
             var existing = _state.Queue.FirstOrDefault(j =>
                 j.ItemId == candidate.ItemId &&
                 (j.Status == JobStatus.Queued || j.Status == JobStatus.Running || j.Status == JobStatus.Paused));
@@ -138,6 +184,8 @@ public class JobStore
                 ItemId = candidate.ItemId,
                 Name = candidate.Name,
                 Path = candidate.Path,
+                SourceWriteUtc = candidate.SourceWriteUtc,
+                SourceSize = candidate.SizeBytes,
                 Action = candidate.PlannedAction,
                 Status = JobStatus.Queued,
                 Reasons = [.. candidate.Reasons],
@@ -150,14 +198,18 @@ public class JobStore
         }
     }
 
-    public List<EncodeJob> EnqueueMany(IEnumerable<CandidateRecord> candidates)
+    public List<EncodeJob> EnqueueMany(IEnumerable<CandidateRecord> candidates, bool automatic = false)
     {
         lock (_gate)
         {
             var created = new List<EncodeJob>();
             foreach (var candidate in candidates)
             {
-                if (_state.Queue.Any(j =>
+                if (_state.Candidates.Any(c => c.Id == candidate.Id && c.Ignored)
+                    || (automatic && _state.Queue.Any(j => j.ItemId == candidate.ItemId
+                        && j.Path == candidate.Path && j.SourceWriteUtc == candidate.SourceWriteUtc
+                        && j.Status is JobStatus.Failed or JobStatus.Skipped or JobStatus.Cancelled))
+                    || _state.Queue.Any(j =>
                         j.ItemId == candidate.ItemId &&
                         (j.Status == JobStatus.Queued || j.Status == JobStatus.Running || j.Status == JobStatus.Paused)))
                 {
@@ -170,6 +222,8 @@ public class JobStore
                     ItemId = candidate.ItemId,
                     Name = candidate.Name,
                     Path = candidate.Path,
+                    SourceWriteUtc = candidate.SourceWriteUtc,
+                    SourceSize = candidate.SizeBytes,
                     Action = candidate.PlannedAction,
                     Status = JobStatus.Queued,
                     Reasons = [.. candidate.Reasons],
@@ -180,7 +234,11 @@ public class JobStore
                 created.Add(CloneJob(job));
             }
 
-            SaveLocked();
+            if (created.Count > 0)
+            {
+                SaveLocked();
+            }
+
             return created;
         }
     }
@@ -190,7 +248,7 @@ public class JobStore
         lock (_gate)
         {
             var job = _state.Queue
-                .Where(j => j.Status == JobStatus.Queued)
+                .Where(j => j.Status == JobStatus.Queued && (j.EligibleAfterUtc is null || j.EligibleAfterUtc <= DateTime.UtcNow))
                 .OrderBy(j => j.QueuedAt)
                 .FirstOrDefault();
             if (job is null)
@@ -199,6 +257,7 @@ public class JobStore
             }
 
             job.Status = JobStatus.Running;
+            job.Phase = "Preparing";
             job.StartedAt = DateTime.UtcNow;
             job.Progress = 0;
             SaveLocked();
@@ -206,11 +265,11 @@ public class JobStore
         }
     }
 
-    public IReadOnlyList<EncodeJob> GetQueue()
+    public IReadOnlyList<EncodeJob> GetQueue(int? limit = null)
     {
         lock (_gate)
         {
-            return _state.Queue.Select(CloneJob).ToList();
+            return _state.Queue.Take(limit is int count ? Math.Clamp(count, 1, 500) : int.MaxValue).Select(CloneJob).ToList();
         }
     }
 
@@ -249,7 +308,7 @@ public class JobStore
         lock (_gate)
         {
             var job = _state.Queue.FirstOrDefault(j => j.Id == id);
-            if (job is null)
+            if (job is null || job.Status != JobStatus.Running)
             {
                 return;
             }
@@ -291,6 +350,18 @@ public class JobStore
     public void ResetProgress(string id, double progress = 0)
     {
         UpdateProgress(id, progress, allowDecrease: true);
+    }
+
+    public void UpdatePhase(string id, string phase)
+    {
+        lock (_gate)
+        {
+            var job = _state.Queue.FirstOrDefault(j => j.Id == id && j.Status == JobStatus.Running);
+            if (job is not null)
+            {
+                job.Phase = phase;
+            }
+        }
     }
 
     public void UpdateEncodePlan(string id, EncodePlan plan)
@@ -347,30 +418,27 @@ public class JobStore
             {
                 ItemId = itemId,
                 Path = path,
-                SizeBytes = sizeBytes
+                SizeBytes = sizeBytes,
+                WriteUtc = File.GetLastWriteTimeUtc(path)
             });
 
             if (replacement is not null)
             {
                 _state.Replacements ??= [];
-                _state.Replacements.RemoveAll(r => r.ItemId == itemId && !r.Restored);
                 _state.Replacements.Insert(0, replacement);
-                if (_state.Replacements.Count > 500)
-                {
-                    _state.Replacements = _state.Replacements.Take(500).ToList();
-                }
             }
 
             SaveLocked();
         }
     }
 
-    public IReadOnlyList<ReplacementRecord> GetReplacements(bool includeRestored = false)
+    public IReadOnlyList<ReplacementRecord> GetReplacements(bool includeRestored = false, int? limit = null)
     {
         lock (_gate)
         {
             return _state.Replacements
                 .Where(r => includeRestored || !r.Restored)
+                .Take(limit is int count ? Math.Clamp(count, 1, 500) : int.MaxValue)
                 .Select(CloneReplacement)
                 .ToList();
         }
@@ -397,6 +465,18 @@ public class JobStore
 
             rec.Restored = true;
             _state.Processed.RemoveAll(p => p.ItemId == rec.ItemId);
+            if (File.Exists(rec.OriginalPath))
+            {
+                var source = new FileInfo(rec.OriginalPath);
+                _state.Processed.Add(new ProcessedMarker
+                {
+                    ItemId = rec.ItemId,
+                    Path = rec.OriginalPath,
+                    SizeBytes = source.Length,
+                    WriteUtc = source.LastWriteTimeUtc
+                });
+            }
+
             var job = _state.Queue.FirstOrDefault(j => j.ReplacementId == id);
             if (job is not null)
             {
@@ -426,14 +506,14 @@ public class JobStore
         }
     }
 
-    public void Requeue(string id, string? statusDetail = null)
+    public bool Requeue(string id, string? statusDetail = null, TimeSpan? delay = null)
     {
         lock (_gate)
         {
             var job = _state.Queue.FirstOrDefault(j => j.Id == id);
-            if (job is null)
+            if (job is null || job.Status is JobStatus.Queued or JobStatus.Done)
             {
-                return;
+                return false;
             }
 
             job.Status = JobStatus.Queued;
@@ -445,12 +525,14 @@ public class JobStore
             job.StartedAt = null;
             job.FinishedAt = null;
             job.QueuedAt = DateTime.UtcNow;
+            job.EligibleAfterUtc = delay is null ? null : job.QueuedAt + delay;
             if (!string.IsNullOrWhiteSpace(statusDetail))
             {
                 job.StatusDetail = statusDetail;
             }
 
             SaveLocked();
+            return true;
         }
     }
 
@@ -477,25 +559,27 @@ public class JobStore
                 job.Status = JobStatus.Cancelled;
                 job.FinishedAt = DateTime.UtcNow;
                 SaveLocked();
+                return true;
             }
 
             return false;
         }
     }
 
-    public void Skip(string id)
+    public bool Skip(string id)
     {
         lock (_gate)
         {
             var job = _state.Queue.FirstOrDefault(j => j.Id == id);
-            if (job is null)
+            if (job?.Status != JobStatus.Queued)
             {
-                return;
+                return false;
             }
 
             job.Status = JobStatus.Skipped;
             job.FinishedAt = DateTime.UtcNow;
             SaveLocked();
+            return true;
         }
     }
 
@@ -521,56 +605,133 @@ public class JobStore
         try
         {
             var path = StorePath();
-            if (!File.Exists(path))
+            foreach (var snapshot in new[] { path, path + ".previous" })
             {
-                return;
+                if (!File.Exists(snapshot))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var json = File.ReadAllText(snapshot);
+                    var state = DeserializeState(json);
+                    if (state.SchemaVersion == 0 && snapshot == path)
+                    {
+                        var legacy = path + ".legacy";
+                        if (!File.Exists(legacy))
+                        {
+                            File.Copy(path, legacy, overwrite: false);
+                        }
+                    }
+
+                    _state = state;
+                    _committedJson = json;
+                    foreach (var job in _state.Queue.Where(j => j.Status == JobStatus.Running))
+                    {
+                        job.Status = JobStatus.Queued;
+                        job.Progress = 0;
+                        job.StartedAt = null;
+                    }
+
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Invalid StreamReady snapshot {Path}", snapshot);
+                }
             }
 
-            var json = File.ReadAllText(path);
-            _state = JsonSerializer.Deserialize<JobStoreState>(json, _json) ?? new JobStoreState();
-            _state.Replacements ??= [];
-            _state.Candidates ??= [];
-            _state.Queue ??= [];
-            _state.Processed ??= [];
-            foreach (var job in _state.Queue.Where(j => j.Status == JobStatus.Running))
-            {
-                job.Status = JobStatus.Queued;
-                job.Progress = 0;
-                job.StartedAt = null;
-            }
+            _healthy = !File.Exists(path) && !File.Exists(path + ".previous");
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to load StreamReady job store");
-            _state = new JobStoreState();
+            _healthy = false;
+            _logger.LogError(ex, "Unable to initialize StreamReady persistence");
         }
+    }
+
+    private JobStoreState DeserializeState(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        if (!document.RootElement.TryGetProperty(nameof(JobStoreState.Queue), out var queue)
+            || queue.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidDataException("The job store has no valid queue.");
+        }
+
+        var state = JsonSerializer.Deserialize<JobStoreState>(json, _json)
+            ?? throw new InvalidDataException("The job store is empty.");
+        if (state.SchemaVersion < 0 || state.SchemaVersion > SchemaVersion)
+        {
+            throw new InvalidDataException("Unsupported job store version.");
+        }
+
+        state.Candidates ??= [];
+        state.Queue ??= [];
+        state.Processed ??= [];
+        state.Replacements ??= [];
+        return state;
     }
 
     private void SaveLocked()
     {
         try
         {
-            var path = StorePath();
-            var dir = Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(dir))
+            if (!_healthy)
             {
-                Directory.CreateDirectory(dir);
+                throw new InvalidOperationException("StreamReady persistence requires recovery.");
             }
 
-            File.WriteAllText(path, JsonSerializer.Serialize(_state, _json));
+            var path = StorePath();
+            _state.SchemaVersion = SchemaVersion;
+            var json = JsonSerializer.Serialize(_state, _json);
+            if (_committedJson is not null)
+            {
+                WriteSnapshot(path + ".previous", _committedJson);
+            }
+
+            WriteSnapshot(path, json);
+            _committedJson = json;
         }
-        catch (Exception ex)
+        catch
         {
-            _logger.LogWarning(ex, "Failed to save StreamReady job store");
+            _state = _committedJson is null ? new JobStoreState() : DeserializeState(_committedJson);
+            _healthy = false;
+            throw;
         }
     }
 
-    private static string StorePath()
+    internal static void WriteSnapshot(string path, string contents)
     {
-        var folder = Plugin.Instance?.DataFolderPath ?? Path.Combine(Path.GetTempPath(), "streamready");
-        Directory.CreateDirectory(folder);
-        return Path.Combine(folder, "jobs.json");
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                using var writer = new StreamWriter(stream, leaveOpen: true);
+                writer.Write(contents);
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally
+        {
+            File.Delete(temporary);
+        }
     }
+
+    internal static string DataDirectory()
+    {
+        var folder = Plugin.Instance?.DataFolderPath
+            ?? throw new InvalidOperationException("The StreamReady plugin data directory is unavailable.");
+        Directory.CreateDirectory(folder);
+        return folder;
+    }
+
+    private string StorePath() => _explicitStorePath ?? Path.Combine(DataDirectory(), "jobs.json");
 
     private static CandidateRecord CloneCandidate(CandidateRecord source)
     {
@@ -584,6 +745,8 @@ public class JobStore
             LibraryId = source.LibraryId,
             LibraryName = source.LibraryName,
             Path = source.Path,
+            SourceWriteUtc = source.SourceWriteUtc,
+            ObservedAt = source.ObservedAt,
             SizeBytes = source.SizeBytes,
             Container = source.Container,
             VideoCodec = source.VideoCodec,
@@ -610,12 +773,16 @@ public class JobStore
             ItemId = source.ItemId,
             Name = source.Name,
             Path = source.Path,
+            SourceWriteUtc = source.SourceWriteUtc,
             Action = source.Action,
             Status = source.Status,
             Progress = source.Progress,
             Error = source.Error,
             ErrorDetail = source.ErrorDetail,
             QueuedAt = source.QueuedAt,
+            EligibleAfterUtc = source.EligibleAfterUtc,
+            Phase = source.Status == JobStatus.Running ? source.Phase : null,
+            SourceSize = source.SourceSize,
             StartedAt = source.StartedAt,
             FinishedAt = source.FinishedAt,
             Reasons = [.. source.Reasons],
@@ -647,6 +814,9 @@ public class JobStore
             BackupPath = source.BackupPath,
             Policy = source.Policy,
             ReplacedAt = source.ReplacedAt,
+            BackupHash = source.BackupHash,
+            FinalSize = source.FinalSize,
+            FinalWriteUtc = source.FinalWriteUtc,
             Restored = source.Restored
         };
     }

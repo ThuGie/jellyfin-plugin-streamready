@@ -109,6 +109,7 @@
                                     <option value="Audio">Audio</option>
                                     <option value="Size">Size</option>
                                     <option value="Bitrate">Bitrate</option>
+                                    <option value="Resolution">Resolution</option>
                                 </select>
                                 <select is="emby-select" id="srSortBy">
                                     <option value="size">Sort: size</option>
@@ -386,6 +387,7 @@
         (function () {
             var pluginId = '9d2e8c4a-1f6b-4a73-b8e0-5c9f3a7d2e11';
             var pollTimer = null;
+            var viewRevision = 0;
             var visibleCandidates = [];
             var candidatesSkip = 0;
             var candidatesTotal = 0;
@@ -672,10 +674,10 @@
                     });
                     libraryOverrides = config.LibraryOverrides || config.libraryOverrides || [];
                     if (!Array.isArray(libraryOverrides)) libraryOverrides = [];
-                    renderCheckGrid('srContainers', CONTAINER_OPTIONS, config.AllowedContainers || 'mp4,m4v,mov', 'sr-container');
-                    renderCheckGrid('srVideoCodecs', VIDEO_CODEC_OPTIONS, config.AllowedVideoCodecs || 'h264', 'sr-video-codec');
-                    renderCheckGrid('srAudioCodecs', AUDIO_CODEC_OPTIONS, config.AllowedAudioCodecs || 'aac,ac3,eac3,mp3', 'sr-audio-codec');
-                    renderCheckGrid('srVideoRanges', VIDEO_RANGE_OPTIONS, config.AllowedVideoRanges || 'SDR', 'sr-video-range');
+                    renderCheckGrid('srContainers', CONTAINER_OPTIONS, config.AllowedContainers ?? 'mp4,m4v,mov', 'sr-container');
+                    renderCheckGrid('srVideoCodecs', VIDEO_CODEC_OPTIONS, config.AllowedVideoCodecs ?? 'h264', 'sr-video-codec');
+                    renderCheckGrid('srAudioCodecs', AUDIO_CODEC_OPTIONS, config.AllowedAudioCodecs ?? 'aac,ac3,eac3,mp3', 'sr-audio-codec');
+                    renderCheckGrid('srVideoRanges', VIDEO_RANGE_OPTIONS, config.AllowedVideoRanges ?? 'SDR', 'sr-video-range');
                     renderCheckGrid('srEncodeDays', ENCODE_DAY_OPTIONS, config.EncodeWindowDays || '0,1,2,3,4,5,6', 'sr-encode-day');
                     renderLibraries(libraries, (config.SelectedLibraryIds || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean));
                     Dashboard.hideLoadingMsg();
@@ -791,10 +793,14 @@
                     config.SelectedLibraryIds = selectedLibraries();
                     config.LibraryOverrides = collectLibraryOverrides();
                     libraryOverrides = config.LibraryOverrides;
-                    ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
+                    return ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
                         clearDirty();
                         Dashboard.processPluginConfigurationUpdateResult(result);
                     });
+                }).catch(function () {
+                    Dashboard.alert('Could not save StreamReady settings.');
+                }).finally(function () {
+                    Dashboard.hideLoadingMsg();
                 });
                 return false;
             }
@@ -807,7 +813,9 @@
             }
 
             function refreshStatus() {
+                var revision = viewRevision;
                 api('/status').then(function (s) {
+                    if (revision !== viewRevision) return;
                     var grid = val('srStatusGrid');
                     if (!grid) return;
                     if (!s || typeof s !== 'object') {
@@ -848,6 +856,10 @@
                         card(paused ? 'warn' : 'ok', paused ? 'pause' : 'play_arrow', 'Worker', workerDetail, 'queue'),
                         card(windowState, 'nightlight', 'Encode window', windowDetail, 'schedule')
                     ];
+                    if (pick(s, 'storeHealthy') === false || pick(s, 'pendingMediaOperation')) {
+                        cards.unshift(card('warn', 'error', 'Recovery required',
+                            pick(s, 'pendingMediaOperation') || 'The job store could not be read or written.', null));
+                    }
                     grid.innerHTML = cards.join('');
 
                     var active = val('srActiveEncode');
@@ -970,7 +982,9 @@
             }
 
             function loadQueue() {
-                api('/queue').then(function (rows) {
+                var revision = viewRevision;
+                api('/queue?limit=200').then(function (rows) {
+                    if (revision !== viewRevision) return;
                     var host = val('srQueue');
                     if (!host) return;
                     rows = rows || [];
@@ -1003,7 +1017,7 @@
                             html += '<details class="sr-error-detail" data-job-id="' + escapeHtml(row.id) + '"' + openAttr + '><summary>FFmpeg log</summary><pre>' + escapeHtml(errDetail) + '</pre></details>';
                         }
                         html += '</td>';
-                        html += '<td>' + escapeHtml(row.status) + '</td>';
+                        html += '<td>' + escapeHtml(row.phase || row.status) + '</td>';
                         html += '<td><div class="sr-progress"><span style="width:' + Math.round(row.progress || 0) + '%"></span></div> ' + escapeHtml(progressLabel) + '</td>';
                         html += '<td class="sr-row-actions">';
                         if (row.status === 'Queued' || row.status === 'Running') {
@@ -1026,7 +1040,9 @@
             }
 
             function loadReplacements() {
-                api('/replacements').then(function (rows) {
+                var revision = viewRevision;
+                api('/replacements?limit=200').then(function (rows) {
+                    if (revision !== viewRevision) return;
                     var host = val('srReplacements');
                     if (!host) return;
                     rows = parseJsonPayload(rows) || [];
@@ -1322,6 +1338,12 @@
                     if (header) header.classList.toggle('sr-is-scrolled', window.scrollY > 8);
                 }, { passive: true });
 
+                document.addEventListener('viewhide', function (ev) {
+                    if (!ev.target || ev.target.id !== 'StreamReadyPage') return;
+                    viewRevision++;
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                });
                 document.addEventListener('viewshow', function (ev) {
                     if (ev.target && ev.target.id === 'StreamReadyPage') onShow();
                 });

@@ -34,6 +34,10 @@ public class CandidateRecord
 
     public string LibraryName { get; set; } = string.Empty;
 
+    public DateTime? SourceWriteUtc { get; set; }
+
+    public DateTime ObservedAt { get; set; } = DateTime.UtcNow;
+
     public string Path { get; set; } = string.Empty;
 
     public long SizeBytes { get; set; }
@@ -75,6 +79,12 @@ public class EncodeJob
 
     public string Name { get; set; } = string.Empty;
 
+    public long? SourceSize { get; set; }
+
+    public string? Phase { get; set; }
+
+    public DateTime? SourceWriteUtc { get; set; }
+
     public string Path { get; set; } = string.Empty;
 
     public EncodeAction Action { get; set; } = EncodeAction.Full;
@@ -87,6 +97,8 @@ public class EncodeJob
 
     /// <summary>Longer ffmpeg stderr / failure detail for the queue UI.</summary>
     public string? ErrorDetail { get; set; }
+
+    public DateTime? EligibleAfterUtc { get; set; }
 
     public DateTime QueuedAt { get; set; } = DateTime.UtcNow;
 
@@ -125,8 +137,15 @@ public class EncodeJob
     public string? ReplacementId { get; set; }
 }
 
+public record ProbedStream(int Index, string Type, string Codec, bool Default, bool AttachedPicture, bool Forced, string? Language);
+
 public class ProbeInfo
 {
+    public List<ProbedStream> Streams { get; } = [];
+    public bool IsValid { get; set; }
+    public long? VideoBitrate { get; set; }
+    public string? ColorTransfer { get; set; }
+
     public double Duration { get; set; }
 
     public bool HasVideo { get; set; }
@@ -172,6 +191,9 @@ public class ReplacementRecord
     public DateTime ReplacedAt { get; set; } = DateTime.UtcNow;
 
     public bool Restored { get; set; }
+    public string? BackupHash { get; set; }
+    public long? FinalSize { get; set; }
+    public DateTime? FinalWriteUtc { get; set; }
 }
 
 public class EncodeProgressUpdate
@@ -212,11 +234,14 @@ public class ProcessedMarker
 
     public string Path { get; set; } = string.Empty;
 
+    public DateTime? WriteUtc { get; set; }
+
     public long SizeBytes { get; set; }
 }
 
 public class JobStoreState
 {
+    public int SchemaVersion { get; set; }
     public List<CandidateRecord> Candidates { get; set; } = [];
 
     public List<EncodeJob> Queue { get; set; } = [];

@@ -21,6 +21,16 @@ Scanning never silently rewrites your library. Auto is off until you turn it on,
 
 Replacement policy is a setting: backup then replace (recommended), replace in place, or write a `.streamready` sidecar.
 
+If MP4 cannot preserve the selected subtitle tracks, StreamReady tries MKV when your allowed containers include MKV or the container list is unrestricted. Otherwise, the job stops before encoding. Output verification is mandatory before publication.
+
+### Upgrading and recovery
+
+After upgrading, test Manual mode on a disposable library, first with Sidecar and then with Backup and Restore. Only enable Auto after confirming the encoded item plays and Jellyfin sees the new path after a container change.
+
+StreamReady preserves the legacy queue snapshot as `jobs.json.legacy`. The dashboard reports when the primary and previous snapshots are unavailable or a media operation requires recovery. For an interrupted operation, preserve the journal and all paths it lists until you have identified the playable copy and reconciled the library. Backups created by older versions lack the fingerprints required for dashboard restore and can be restored manually.
+
+The plugin's interval controls its recurring scans. A Jellyfin scheduled-task trigger already configured on your server remains independent and can still invoke a scan. Encode windows use server-local time, with an overnight window counted on the day it starts.
+
 ## Install
 
 Requires **Jellyfin Server 10.11.x**.
@@ -65,6 +75,12 @@ Default output preset is **Balanced**: MP4 + H.264 High + AAC 5.1 + SDR tone-map
 
 ```bash
 dotnet publish Jellyfin.Plugin.StreamReady/Jellyfin.Plugin.StreamReady.csproj -c Release
+```
+
+Run the regression suite with FFmpeg and FFprobe on the path:
+
+```bash
+dotnet run --project tests/StreamReady.Regression -c Release -- --ffmpeg
 ```
 
 Copy the published `Jellyfin.Plugin.StreamReady.dll` (and `thumb.png`) into the Jellyfin plugins directory.

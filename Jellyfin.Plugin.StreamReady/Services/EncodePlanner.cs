@@ -19,19 +19,14 @@ public class EncodePlanner
         }
 
         var dest = DestinationContainer(config);
-        if (audioNeedsEncode || !ContainerSupportsAudio(dest, audioCodec))
+        if (!ContainerSupportsVideo(dest, videoCodec))
         {
-            return EncodeAction.AudioOnly;
+            return EncodeAction.Full;
         }
 
-        if (containerNeedsRemux)
+        if (audioNeedsEncode || (audioCodec.Length > 0 && !ContainerSupportsAudio(dest, audioCodec)))
         {
-            if (!ContainerSupportsVideo(dest, videoCodec))
-            {
-                return EncodeAction.Full;
-            }
-
-            return EncodeAction.Remux;
+            return EncodeAction.AudioOnly;
         }
 
         return EncodeAction.Remux;
@@ -100,6 +95,29 @@ public class EncodePlanner
     {
         var c = (config.OutputContainer ?? "mp4").Trim().ToLowerInvariant();
         return c is "mkv" or "mp4" ? c : "mp4";
+    }
+
+    internal static string SelectOutputContainer(PluginConfiguration config, IReadOnlyList<ProbedStream> subtitles)
+    {
+        var container = DestinationContainer(config);
+        var allowed = CompatibilityAnalyzer.Split(config.AllowedContainers)
+            .Select(CompatibilityAnalyzer.NormalizeContainer).ToHashSet();
+        if (container == "mp4" && subtitles.Any(stream => stream.Codec is not ("mov_text" or "subrip")))
+        {
+            if (allowed.Count > 0 && !allowed.Contains("mkv"))
+            {
+                throw new InvalidOperationException("Selected subtitle tracks require MKV, which the compatibility profile excludes.");
+            }
+
+            return "mkv";
+        }
+
+        if (allowed.Count > 0 && !allowed.Contains(container))
+        {
+            throw new InvalidOperationException("The output container is outside the compatibility profile.");
+        }
+
+        return container;
     }
 
     public static string DestinationVideoCodec(PluginConfiguration config)
