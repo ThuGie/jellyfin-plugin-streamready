@@ -299,7 +299,7 @@
                                 <input is="emby-input" id="BackupFolder" type="text" />
                             </div>
                             <div class="inputContainer">
-                                <label class="inputLabel" for="BackupRetentionDays">Backup retention (days, 0 = keep forever)</label>
+                                <label class="inputLabel" for="BackupRetentionDays">Retention for legacy or restored backups (days, 0 = keep forever)</label>
                                 <input is="emby-input" id="BackupRetentionDays" type="number" min="0" />
                             </div>
                             <div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" id="VerifyBeforeReplace"/><span>Verify output before replacing (duration, video stream, dimensions)</span></label></div>
@@ -869,7 +869,7 @@
                                 || [pick(currentJob, 'videoEncoder'), pick(currentJob, 'hardwarePath'), pick(currentJob, 'toneMap') ? 'tone-map ON' : 'tone-map OFF'].filter(Boolean).join(' · ');
                             var range = pick(currentJob, 'videoRange') || '';
                             active.style.display = '';
-                            active.innerHTML = '<i class="material-icons sr-info-icon">movie_filter</i><div><strong>Encoding:</strong> '
+                            active.innerHTML = '<i class="material-icons sr-info-icon">movie_filter</i><div><strong>' + escapeHtml(pick(currentJob, 'phase') || 'Encoding') + '</strong> '
                                 + escapeHtml(pick(currentJob, 'name') || '')
                                 + ' — <strong>' + pct + '%</strong>'
                                 + (eta ? ' · ' + escapeHtml(eta) : '')
@@ -1054,15 +1054,25 @@
                         host.innerHTML = '<div class="sr-empty">No replacements yet. After a successful Backup or Alternate encode, Restore appears here.</div>';
                         return;
                     }
-                    var html = '<table class="sr-table"><thead><tr><th>Title</th><th>Policy</th><th>When</th><th></th></tr></thead><tbody>';
+                    var html = '<table class="sr-table"><thead><tr><th>Title</th><th>Before / After</th><th>Policy</th><th>When</th><th></th></tr></thead><tbody>';
                     rows.forEach(function (row) {
                         var when = pick(row, 'replacedAt') || '';
                         try { when = new Date(when).toLocaleString(); } catch (e) {}
                         html += '<tr><td><strong>' + escapeHtml(pick(row, 'name') || '') + '</strong>'
                             + '<div class="sr-service-detail">' + escapeHtml(pick(row, 'finalPath') || '') + '</div></td>';
+                        html += '<td>' + formatReplacementSize(pick(row, 'originalSize')) + ' / '
+                            + formatReplacementSize(pick(row, 'encodedSize')) + '</td>';
                         html += '<td>' + escapeHtml(pick(row, 'policy') || '') + '</td>';
                         html += '<td>' + escapeHtml(when) + '</td>';
                         html += '<td class="sr-row-actions">';
+                        var replacementId = escapeHtml(pick(row, 'id'));
+                        if (pick(row, 'canPreviewEncoded')) {
+                            html += '<button type="button" class="raised raised-mini emby-button sr-review" data-id="' + replacementId
+                                + '" data-original="' + Boolean(pick(row, 'canPreviewOriginal')) + '">Preview</button>';
+                        }
+                        if (pick(row, 'canDeleteOriginal')) {
+                            html += '<button type="button" class="raised raised-mini emby-button sr-delete-original" data-id="' + replacementId + '">Delete original backup</button>';
+                        }
                         if (pick(row, 'canRestore')) {
                             html += '<button type="button" class="raised raised-mini emby-button sr-restore" data-id="' + pick(row, 'id') + '">Restore</button>';
                         } else {
@@ -1076,6 +1086,65 @@
                     var host = val('srReplacements');
                     if (host) host.innerHTML = '<div class="sr-empty">Could not load replacements.</div>';
                 });
+            }
+
+            function formatReplacementSize(bytes) {
+                if (bytes == null) return 'Unknown';
+                return bytes >= 1073741824 ? (bytes / 1073741824).toFixed(2) + ' GiB'
+                    : (bytes / 1048576).toFixed(2) + ' MiB';
+            }
+
+            function reviewReplacement(id, hasOriginal) {
+                var dialog = document.createElement('dialog');
+                dialog.className = 'sr-review-dialog';
+                dialog.innerHTML = '<form method="dialog"><h2>Compare versions</h2>'
+                    + '<label>Start time (seconds) <input type="number" min="0" max="86400" value="0"></label> '
+                    + (hasOriginal ? '<button type="button" data-version="original">Original</button> ' : '')
+                    + '<button type="button" data-version="encoded">Encoded</button> '
+                    + '<button>Close</button><p role="status">Choose a version for a 20-second preview.</p>'
+                    + '<video controls playsinline></video></form>';
+                var player = dialog.querySelector('video');
+                var message = dialog.querySelector('[role="status"]');
+                var request;
+                var clipUrl;
+                dialog.addEventListener('close', function () {
+                    if (request) request.abort();
+                    if (clipUrl) URL.revokeObjectURL(clipUrl);
+                    dialog.remove();
+                }, { once: true });
+                dialog.addEventListener('click', async function (event) {
+                    var version = event.target.getAttribute('data-version');
+                    if (!version || request) return;
+                    var start = dialog.querySelector('input');
+                    if (!start.reportValidity()) return;
+                    var current = request = new AbortController();
+                    player.pause();
+                    message.textContent = 'Preparing ' + version + ' preview...';
+                    var url = ApiClient.getUrl('/StreamReady/replacements/' + encodeURIComponent(id) + '/preview'
+                        + '?version=' + version + '&startSeconds=' + (start.value || '0'));
+                    try {
+                        var response = await fetch(url, {
+                            headers: { 'X-Emby-Token': ApiClient.accessToken() }, signal: current.signal
+                        });
+                        if (!response.ok) {
+                            var body = await response.json().catch(function () { return {}; });
+                            throw new Error(body.error || 'Preview could not be prepared.');
+                        }
+                        var blob = await response.blob();
+                        if (current.signal.aborted) return;
+                        if (clipUrl) URL.revokeObjectURL(clipUrl);
+                        clipUrl = URL.createObjectURL(blob);
+                        player.src = clipUrl;
+                        message.textContent = version === 'original' ? 'Original preview' : 'Encoded preview';
+                        player.play().catch(function () {});
+                    } catch (error) {
+                        if (!current.signal.aborted) message.textContent = error.message;
+                    } finally {
+                        request = null;
+                    }
+                });
+                getPage().appendChild(dialog);
+                dialog.showModal();
             }
 
             function pickedIds() {
@@ -1275,6 +1344,25 @@
                         markDirty();
                         return;
                     }
+                    var review = ev.target.closest('.sr-review');
+                    if (review) {
+                        reviewReplacement(review.getAttribute('data-id'), review.getAttribute('data-original') === 'true');
+                        return;
+                    }
+
+                    var deleteOriginal = ev.target.closest('.sr-delete-original');
+                    if (deleteOriginal) {
+                        if (!window.confirm('Permanently delete the original backup? The encoded video stays in your library.')) return;
+                        deleteOriginal.disabled = true;
+                        api('/replacements/' + encodeURIComponent(deleteOriginal.getAttribute('data-id')) + '/original', 'DELETE')
+                            .then(function () { loadReplacements(); loadQueue(); })
+                            .catch(function () {
+                                Dashboard.alert('Could not delete the original backup.');
+                                loadReplacements();
+                            });
+                        return;
+                    }
+
                     var restoreBtn = ev.target.closest('.sr-restore');
                     if (restoreBtn) {
                         ev.preventDefault();

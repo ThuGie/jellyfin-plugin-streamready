@@ -267,6 +267,50 @@ public class FfmpegRunner
         return info;
     }
 
+    private readonly SemaphoreSlim _previewSlot = new(1, 1);
+
+    public async Task<FileStream> CreatePreviewAsync(string path, int startSeconds, CancellationToken cancellationToken)
+    {
+        if (!await _previewSlot.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+        {
+            throw new InvalidOperationException("Another preview is being prepared. Try again shortly.");
+        }
+
+        var target = Path.Combine(Path.GetTempPath(), $"streamready-preview-{Guid.NewGuid():N}.mp4");
+        var handedOff = false;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromMinutes(2));
+        try
+        {
+            var start = startSeconds.ToString(CultureInfo.InvariantCulture);
+            var args = $"-nostdin -v error -threads 2 -ss {start} -i {Quote(path)} -map 0:V:0 -map 0:a:0? "
+                + $"-t 20 -vf scale=-2:480 -c:v libx264 -threads 2 -preset ultrafast -pix_fmt yuv420p "
+                + $"-c:a aac -ac 2 -movflags +faststart {Quote(target)}";
+            var (exit, _, _) = await RunProcessAsync(EncoderPath, args, null, null, timeout.Token).ConfigureAwait(false);
+            if (exit != 0 || !File.Exists(target) || new FileInfo(target).Length < 1024)
+            {
+                throw new InvalidOperationException("This preview could not be prepared. Try a point within the video.");
+            }
+
+            var file = new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.Read,
+                bufferSize: 64 * 1024, FileOptions.Asynchronous | FileOptions.DeleteOnClose);
+            handedOff = true;
+            return file;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException("Preview generation exceeded two minutes.");
+        }
+        finally
+        {
+            _previewSlot.Release();
+            if (!handedOff)
+            {
+                File.Delete(target);
+            }
+        }
+    }
+
     public async Task VerifyDecodeAsync(string path, double duration, CancellationToken cancellationToken)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

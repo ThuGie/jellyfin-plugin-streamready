@@ -480,6 +480,16 @@ public class JobStore
         }
     }
 
+    public void MarkOriginalDeleted(string id)
+    {
+        lock (_gate)
+        {
+            var record = _state.Replacements.Single(record => record.Id == id);
+            record.OriginalDeletedAt = DateTime.UtcNow;
+            SaveLocked();
+        }
+    }
+
     public void MarkRestored(string id)
     {
         lock (_gate)
@@ -843,6 +853,8 @@ public class JobStore
             Policy = source.Policy,
             ReplacedAt = source.ReplacedAt,
             BackupHash = source.BackupHash,
+            OriginalSize = source.OriginalSize,
+            OriginalDeletedAt = source.OriginalDeletedAt,
             FinalSize = source.FinalSize,
             FinalWriteUtc = source.FinalWriteUtc,
             Restored = source.Restored

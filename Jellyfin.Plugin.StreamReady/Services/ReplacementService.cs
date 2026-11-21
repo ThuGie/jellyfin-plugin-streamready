@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Security.Cryptography;
 using Jellyfin.Plugin.StreamReady.Configuration;
 using Jellyfin.Plugin.StreamReady.Models;
 using MediaBrowser.Controller.Entities;
@@ -99,6 +101,7 @@ public class ReplacementService
                     FinalPath = operation.Output,
                     BackupPath = operation.Backup,
                     BackupHash = operation.BackupHash,
+                    OriginalSize = operation.SourceLength,
                     Policy = policy,
                     FinalSize = operation.StagingLength,
                     FinalWriteUtc = operation.StagingWriteUtc
@@ -160,8 +163,10 @@ public class ReplacementService
         PluginConfiguration config,
         Action beforePromotion,
         Action<ReplacementRecord> complete,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<string>? reportPhase = null)
     {
+        reportPhase?.Invoke("Waiting to publish");
         await _mutation.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -189,6 +194,10 @@ public class ReplacementService
                 throw new IOException("The output destination already exists.");
             }
 
+            var originalInfo = new FileInfo(originalPath);
+            var sourceLength = originalInfo.Length;
+            var sourceWrite = originalInfo.LastWriteTimeUtc;
+            var keepSwapBackup = policy == "Backup" && samePath && string.IsNullOrWhiteSpace(config.BackupFolder);
             string? backup = null;
             string? backupHash = null;
             if (policy == "Backup")
@@ -198,15 +207,30 @@ public class ReplacementService
                     : config.BackupFolder;
                 Directory.CreateDirectory(folder);
                 backup = Path.Combine(folder, id + Path.GetExtension(originalPath));
-                backupHash = await CopyVerifiedAsync(originalPath, backup, cancellationToken).ConfigureAwait(false);
+                if (keepSwapBackup)
+                {
+                    reportPhase?.Invoke("Checksumming original");
+                    await using var source = OpenSequential(originalPath);
+                    backupHash = Convert.ToHexString(await SHA256.HashDataAsync(source, cancellationToken).ConfigureAwait(false));
+                }
+                else
+                {
+                    reportPhase?.Invoke("Copying backup");
+                    backupHash = await CopyVerifiedAsync(originalPath, backup, cancellationToken,
+                        () => reportPhase?.Invoke("Verifying backup")).ConfigureAwait(false);
+                }
             }
 
             beforePromotion();
-            var rollback = policy == "Sidecar" ? null : stem + "." + id + ".streamready-rollback";
+            if (!Matches(originalPath, sourceLength, sourceWrite))
+            {
+                throw new IOException("The original changed while preparing the backup.");
+            }
+
+            var rollback = keepSwapBackup ? backup : policy == "Sidecar" ? null : stem + "." + id + ".streamready-rollback";
             var stagingInfo = new FileInfo(tempPath);
-            var originalInfo = new FileInfo(originalPath);
             var operation = new Operation(id, originalPath, destination, tempPath, backup, rollback,
-                stagingInfo.Length, stagingInfo.LastWriteTimeUtc, originalInfo.Length, originalInfo.LastWriteTimeUtc,
+                stagingInfo.Length, stagingInfo.LastWriteTimeUtc, sourceLength, sourceWrite,
                 jobId, item.Id.ToString("N"), item.Name, policy, backupHash);
             JobStore.WriteSnapshot(JournalPath, System.Text.Json.JsonSerializer.Serialize(operation));
             if (samePath)
@@ -222,6 +246,11 @@ public class ReplacementService
                 }
             }
 
+            if (keepSwapBackup && !Matches(backup!, sourceLength, sourceWrite))
+            {
+                throw new IOException("The original preserved by the atomic swap could not be identified.");
+            }
+
             var output = new FileInfo(destination);
             complete(new ReplacementRecord
             {
@@ -232,12 +261,13 @@ public class ReplacementService
                 FinalPath = destination,
                 BackupPath = backup,
                 BackupHash = backupHash,
+                OriginalSize = sourceLength,
                 Policy = policy,
                 FinalSize = output.Length,
                 FinalWriteUtc = output.LastWriteTimeUtc
             });
 
-            if (rollback is not null)
+            if (rollback is not null && !keepSwapBackup)
             {
                 File.Delete(rollback);
             }
@@ -245,6 +275,69 @@ public class ReplacementService
             File.Delete(JournalPath);
             PruneOwnedBackups(config.BackupRetentionDays);
             Refresh(item);
+        }
+        finally
+        {
+            _mutation.Release();
+        }
+    }
+
+    public string ResolvePreviewPath(ReplacementRecord record, bool original)
+    {
+        if (record.Restored || !Matches(record.FinalPath, record.FinalSize, record.FinalWriteUtc))
+        {
+            throw new InvalidOperationException("The encoded file changed or was restored.");
+        }
+
+        if (!original)
+        {
+            return record.FinalPath;
+        }
+
+        var path = record.Policy == "Sidecar" ? record.OriginalPath : record.BackupPath;
+        if (record.OriginalDeletedAt is not null || path is null || !File.Exists(path))
+        {
+            throw new InvalidOperationException("The original is unavailable.");
+        }
+
+        return path;
+    }
+
+    public async Task DeleteOriginalAsync(string id, CancellationToken cancellationToken)
+    {
+        await _mutation.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            EnsureReady();
+            var record = _store.GetReplacement(id) ?? throw new InvalidOperationException("Replacement not found.");
+            if (record.OriginalDeletedAt is not null)
+            {
+                return;
+            }
+
+            if (record.Policy != "Backup" || record.BackupHash is null || record.BackupPath is null
+                || SamePath(record.BackupPath, record.FinalPath) || SamePath(record.BackupPath, record.OriginalPath)
+                || Path.GetFileNameWithoutExtension(record.BackupPath) != record.Id)
+            {
+                throw new InvalidOperationException("Only a verified StreamReady backup can be deleted here.");
+            }
+
+            var backup = ResolvePreviewPath(record, original: true);
+            byte[] digest;
+            await using (var stream = OpenSequential(backup))
+            {
+                digest = await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (Convert.ToHexString(digest) != record.BackupHash)
+            {
+                throw new InvalidOperationException("The backup no longer matches replacement history.");
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            ResolvePreviewPath(record, original: false);
+            File.Delete(backup);
+            _store.MarkOriginalDeleted(id);
         }
         finally
         {
@@ -349,7 +442,7 @@ public class ReplacementService
         foreach (var record in _store.GetReplacements(includeRestored: true))
         {
             var path = record.BackupPath;
-            if (path is null || record.BackupHash is null || record.ReplacedAt >= cutoff
+            if (path is null || (record.OriginalSize is not null && !record.Restored) || record.BackupHash is null || record.ReplacedAt >= cutoff
                 || Path.GetFileNameWithoutExtension(path) != record.Id || !File.Exists(path))
             {
                 continue;
@@ -378,21 +471,41 @@ public class ReplacementService
         }
     }
 
-    private static async Task<string> CopyVerifiedAsync(string sourcePath, string destination, CancellationToken cancellationToken)
+    private static FileStream OpenSequential(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.Read,
+        bufferSize: 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+
+    private static async Task<string> CopyVerifiedAsync(string sourcePath, string destination,
+        CancellationToken cancellationToken, Action? beforeVerification = null)
     {
         var created = false;
         try
         {
-            await using var source = File.OpenRead(sourcePath);
-            await using var target = new FileStream(destination, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+            await using var source = OpenSequential(sourcePath);
+            await using var target = new FileStream(destination, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None,
+                bufferSize: 128 * 1024, FileOptions.Asynchronous);
             created = true;
             var length = source.Length;
-            await source.CopyToAsync(target, cancellationToken).ConfigureAwait(false);
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var buffer = ArrayPool<byte>.Shared.Rent(1024 * 1024);
+            try
+            {
+                int read;
+                while ((read = await source.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false)) > 0)
+                {
+                    hash.AppendData(buffer, 0, read);
+                    await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+
+            beforeVerification?.Invoke();
             target.Flush(flushToDisk: true);
-            source.Position = 0;
             target.Position = 0;
-            var sourceHash = await System.Security.Cryptography.SHA256.HashDataAsync(source, cancellationToken).ConfigureAwait(false);
-            var targetHash = await System.Security.Cryptography.SHA256.HashDataAsync(target, cancellationToken).ConfigureAwait(false);
+            var sourceHash = hash.GetHashAndReset();
+            var targetHash = await SHA256.HashDataAsync(target, cancellationToken).ConfigureAwait(false);
             if (target.Length != length || !sourceHash.AsSpan().SequenceEqual(targetHash))
             {
                 throw new IOException("The media copy could not be verified.");

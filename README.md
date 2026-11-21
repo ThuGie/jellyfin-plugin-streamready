@@ -23,6 +23,13 @@ Replacement policy is a setting: backup then replace (recommended), replace in p
 
 If MP4 cannot preserve the selected subtitle tracks, StreamReady tries MKV when your allowed containers include MKV or the container list is unrestricted. Otherwise, the job stops before encoding. Output verification is mandatory before publication.
 
+### Reviewing replacements
+
+The Replacements tab shows original and encoded sizes and plays short browser-compatible
+samples from either version at a selected time. With Backup policy, newly recorded originals
+remain available until you restore them or explicitly delete the original backup.
+Older records may still follow their configured retention policy.
+
 ### Upgrading and recovery
 
 After upgrading, test Manual mode on a disposable library, first with Sidecar and then with Backup and Restore. Only enable Auto after confirming the encoded item plays and Jellyfin sees the new path after a container change.

@@ -194,6 +194,8 @@ public class ReplacementRecord
 
     public bool Restored { get; set; }
     public string? BackupHash { get; set; }
+    public long? OriginalSize { get; set; }
+    public DateTime? OriginalDeletedAt { get; set; }
     public long? FinalSize { get; set; }
     public DateTime? FinalWriteUtc { get; set; }
 }

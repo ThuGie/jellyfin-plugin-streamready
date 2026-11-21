@@ -500,7 +500,7 @@ public class EncodeWorker : BackgroundService
             }, replacement => _store.Complete(job.Id, job.ItemId,
                 replacement.Policy == "Sidecar" ? sourcePath : replacement.FinalPath,
                 replacement.Policy == "Sidecar" ? sourceLength : replacement.FinalSize!.Value,
-                replacement), jobCts.Token).ConfigureAwait(false);
+                replacement), jobCts.Token, phase => _store.UpdatePhase(job.Id, phase)).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {

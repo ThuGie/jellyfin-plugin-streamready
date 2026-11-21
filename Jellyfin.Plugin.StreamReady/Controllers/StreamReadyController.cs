@@ -114,6 +114,7 @@ public class StreamReadyController : ControllerBase
                     name = current.Name,
                     progress = current.Progress,
                     status = current.Status.ToString(),
+                    phase = current.Phase,
                     action = current.Action.ToString(),
                     statusDetail = current.StatusDetail,
                     videoEncoder = current.VideoEncoder,
@@ -356,6 +357,55 @@ public class StreamReadyController : ControllerBase
         }
     }
 
+    [Authorize(Policy = Policies.RequiresElevation)]
+    [HttpGet("replacements/{id}/preview")]
+    public async Task<ActionResult> PreviewReplacement(string id, [FromQuery] string version,
+        [FromQuery] int startSeconds, CancellationToken cancellationToken)
+    {
+        var record = _store.GetReplacement(id);
+        if (record is null)
+        {
+            return NotFound();
+        }
+
+        if (version is not ("original" or "encoded") || startSeconds < 0 || startSeconds > 86_400)
+        {
+            return BadRequest(new { error = "Choose a version and a valid time within the video." });
+        }
+
+        try
+        {
+            var path = _replacement.ResolvePreviewPath(record, original: version == "original");
+            var clip = await _ffmpeg.CreatePreviewAsync(path, startSeconds, cancellationToken).ConfigureAwait(false);
+            Response.Headers.CacheControl = "no-store";
+            return File(clip, "video/mp4");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or TimeoutException)
+        {
+            return Conflict(new { error = ex.Message });
+        }
+    }
+
+    [Authorize(Policy = Policies.RequiresElevation)]
+    [HttpDelete("replacements/{id}/original")]
+    public async Task<ActionResult> DeleteOriginal(string id, CancellationToken cancellationToken)
+    {
+        if (_store.GetReplacement(id) is null)
+        {
+            return NotFound();
+        }
+
+        try
+        {
+            await _replacement.DeleteOriginalAsync(id, cancellationToken).ConfigureAwait(false);
+            return Ok(new { deleted = true });
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            return Conflict(new { error = ex.Message });
+        }
+    }
+
     private IEnumerable<CandidateRecord> FilterCandidates(string? reason, string? itemType, string? q)
     {
         var list = _store.GetCandidates().AsEnumerable();
@@ -486,10 +536,30 @@ public class StreamReadyController : ControllerBase
             policy = r.Policy,
             replacedAt = r.ReplacedAt,
             restored = r.Restored,
-            canRestore = !r.Restored && r.FinalSize is not null && r.FinalWriteUtc is not null && (
+            originalSize = r.OriginalSize ?? ExistingLength(r.Policy == "Sidecar" ? r.OriginalPath : r.BackupPath),
+            encodedSize = r.FinalSize ?? ExistingLength(r.FinalPath),
+            originalDeletedAt = r.OriginalDeletedAt,
+            canPreviewEncoded = !r.Restored && r.FinalSize is not null && System.IO.File.Exists(r.FinalPath),
+            canPreviewOriginal = !r.Restored && r.FinalSize is not null && r.OriginalDeletedAt is null
+                && System.IO.File.Exists(r.Policy == "Sidecar" ? r.OriginalPath : r.BackupPath),
+            canDeleteOriginal = !r.Restored && r.Policy == "Backup" && r.BackupHash is not null
+                && r.OriginalDeletedAt is null && System.IO.File.Exists(r.BackupPath),
+            canRestore = !r.Restored && r.OriginalDeletedAt is null && r.FinalSize is not null && r.FinalWriteUtc is not null && (
                 string.Equals(r.Policy, "Sidecar", StringComparison.OrdinalIgnoreCase)
                 || (!string.IsNullOrWhiteSpace(r.BackupPath) && System.IO.File.Exists(r.BackupPath)))
         };
+    }
+
+    private static long? ExistingLength(string? path)
+    {
+        try
+        {
+            return System.IO.File.Exists(path) ? new FileInfo(path!).Length : null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
     }
 
     private static bool CanRestore(EncodeJob j)

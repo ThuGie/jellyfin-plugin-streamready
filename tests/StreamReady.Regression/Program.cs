@@ -146,6 +146,43 @@ try
         "Startup publishes missing history for a journaled promotion");
     Check(media.GetFiles("*.streamready-rollback").Any(file => File.ReadAllText(file.FullName) == "original contents"),
         "Startup retains the original media from an interrupted promotion");
+
+    foreach (var customFolder in new[] { false, true })
+    {
+        var name = customFolder ? "copied" : "swapped";
+        var sourcePath = Path.Combine(media.FullName, name + ".mkv");
+        var stagedPath = Path.Combine(media.FullName, name + ".tmp.mkv");
+        var originalBytes = "the original backup bytes";
+        var encodedBytes = "the encoded bytes";
+        await File.WriteAllTextAsync(sourcePath, originalBytes);
+        await File.WriteAllTextAsync(stagedPath, encodedBytes);
+        var phase = new List<string>();
+        ReplacementRecord? committed = null;
+        var backupPolicy = new PluginConfiguration
+        {
+            ReplacementPolicy = "Backup",
+            BackupFolder = customFolder ? Path.Combine(media.FullName, "custom") : ""
+        };
+        await replacement.CommitAsync(item, job.Id, sourcePath, stagedPath, backupPolicy, () => { }, value =>
+        {
+            committed = value;
+            store.Complete(job.Id, item.Id.ToString("N"), value.FinalPath, value.FinalSize!.Value, value);
+        }, CancellationToken.None, phase.Add);
+        Check(committed is not null && File.ReadAllText(committed.BackupPath!) == originalBytes
+            && File.ReadAllText(sourcePath) == encodedBytes, "Backup keeps the original and publishes the encode");
+        Check(committed!.OriginalSize == originalBytes.Length && committed.FinalSize == encodedBytes.Length,
+            "Replacement history records both sizes");
+        Check(phase.Contains(customFolder ? "Verifying backup" : "Checksumming original"),
+            "The backup exposes its actual work stage");
+        Check(replacement.ResolvePreviewPath(committed, original: true) == committed.BackupPath
+            && replacement.ResolvePreviewPath(committed, original: false) == sourcePath,
+            "Preview resolves recorded versions");
+        await replacement.DeleteOriginalAsync(committed.Id, CancellationToken.None);
+        Check(!File.Exists(committed.BackupPath) && File.ReadAllText(sourcePath) == encodedBytes
+            && store.GetReplacement(committed.Id)?.OriginalDeletedAt is not null,
+            "Deleting the verified original leaves the encoded file and records the deletion");
+    }
+
 }
 finally
 {
@@ -205,6 +242,9 @@ if (args.Contains("--ffmpeg"))
         var mkv = await runner.ProbeMediaAsync(mkvOutput, CancellationToken.None);
         Check(mkv.Streams.Any(s => s.Type == "subtitle" && s.Codec == "subrip" && s.Language == "eng" && s.Forced),
             "MKV converts mov_text subtitles and preserves language and forced disposition");
+
+        await using var clip = await runner.CreatePreviewAsync(mkvOutput, 0, CancellationToken.None);
+        Check(clip.Length > 1024, "An MKV replacement can be previewed as an MP4 sample");
     }
     finally
     {
