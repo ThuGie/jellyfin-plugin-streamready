@@ -397,9 +397,10 @@ public class StreamReadyController : ControllerBase
 
     [Authorize(Policy = Policies.RequiresElevation)]
     [HttpGet("replacements")]
-    public ActionResult<object> GetReplacements([FromQuery] int? limit = null)
+    public ActionResult<object> GetReplacements([FromQuery] int? limit = null, [FromQuery] bool showCompleted = false)
     {
-        return _store.GetReplacements(limit: limit).Select(MapReplacement).ToList();
+        return _store.GetReplacements(includeRestored: showCompleted, limit: limit, includeDeletedOriginals: showCompleted)
+            .Select(MapReplacement).ToList();
     }
 
     [Authorize(Policy = Policies.RequiresElevation)]

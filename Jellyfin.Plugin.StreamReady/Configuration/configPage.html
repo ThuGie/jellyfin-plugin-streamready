@@ -314,6 +314,8 @@
                         <legend class="sectionTitle"><i class="material-icons sr-legend-icon">history</i>Recent replacements</legend>
                         <div class="configSection">
                             <div class="sr-setting-description"><div class="fieldDescription">Restore puts the backup back (or removes a sidecar). Silent — no notifications.</div></div>
+                            <div class="checkboxContainer"><label><input is="emby-checkbox" type="checkbox" id="srShowCompletedReplacements" />
+                                <span>Show completed replacement history</span></label></div>
                             <div id="srReplacements" class="sr-table-wrap"></div>
                         </div>
                     </fieldset>
@@ -1146,7 +1148,10 @@
 
             function loadReplacements() {
                 var revision = viewRevision;
-                api('/replacements?limit=200').then(function (rows) {
+                var showCompleted = Boolean(val('srShowCompletedReplacements') && val('srShowCompletedReplacements').checked);
+                api('/replacements?limit=200&showCompleted=' + showCompleted).then(function (rows) {
+                    var toggle = val('srShowCompletedReplacements');
+                    if (toggle && toggle.checked !== showCompleted) return;
                     if (revision !== viewRevision) return;
                     var host = val('srReplacements');
                     if (!host) return;
@@ -1174,6 +1179,10 @@
                         }
                         if (pick(row, 'canDeleteOriginal')) {
                             html += '<button type="button" class="raised raised-mini emby-button sr-delete-original" data-id="' + replacementId + '">Delete original backup</button>';
+                        } else if (pick(row, 'restored')) {
+                            html += '<span>Restored</span>';
+                        } else if (pick(row, 'originalDeletedAt')) {
+                            html += '<span>Original backup deleted</span>';
                         }
                         if (pick(row, 'canRestore')) {
                             html += '<button type="button" class="raised raised-mini emby-button sr-restore" data-id="' + pick(row, 'id') + '">Restore</button>';
@@ -1563,6 +1572,7 @@
                 document.addEventListener('change', function (ev) {
                     var page = ev.target.closest && ev.target.closest('#StreamReadyPage');
                     if (!page) return;
+                    if (ev.target.id === 'srShowCompletedReplacements') loadReplacements();
                     if (ev.target.id === 'srCandidateView') {
                         seriesRevision++;
                         seriesOffset = 0;

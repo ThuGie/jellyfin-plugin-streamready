@@ -218,6 +218,9 @@ try
         Check(!File.Exists(committed.BackupPath) && File.ReadAllText(sourcePath) == encodedBytes
             && store.GetReplacement(committed.Id)?.OriginalDeletedAt is not null,
             "Deleting the verified original leaves the encoded file and records the deletion");
+        Check(!store.GetReplacements().Any(record => record.Id == committed.Id)
+            && store.GetReplacements(includeDeletedOriginals: true).Any(record => record.Id == committed.Id),
+            "Deleted originals disappear from review and remain in history");
     }
 
 }

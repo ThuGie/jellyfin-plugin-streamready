@@ -459,12 +459,13 @@ public class JobStore
         }
     }
 
-    public IReadOnlyList<ReplacementRecord> GetReplacements(bool includeRestored = false, int? limit = null)
+    public IReadOnlyList<ReplacementRecord> GetReplacements(bool includeRestored = false, int? limit = null, bool includeDeletedOriginals = false)
     {
         lock (_gate)
         {
             return _state.Replacements
                 .Where(r => includeRestored || !r.Restored)
+                .Where(r => includeDeletedOriginals || r.OriginalDeletedAt is null)
                 .Take(limit is int count ? Math.Clamp(count, 1, 500) : int.MaxValue)
                 .Select(CloneReplacement)
                 .ToList();
