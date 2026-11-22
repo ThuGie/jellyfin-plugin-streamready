@@ -394,18 +394,36 @@ public class EncodeWorker : BackgroundService
 
                 var outputAudio = probe.Streams.Where(stream => stream.Type == "audio").ToArray();
                 var outputSubs = probe.Streams.Where(stream => stream.Type == "subtitle").ToArray();
-                static string? Language(ProbedStream stream) => stream.Language is null or "und" ? null : stream.Language;
-
-                if (outputAudio.Where((track, index) =>
-                        CompatibilityAnalyzer.NormalizeCodec(track.Codec) != audioPlan[index].Codec
-                        || (audioPlan[index].Channels is int channels && track.Channels != channels)
-                        || Language(audio[index]) != Language(track)
-                        || (audio.Count > 1 && audio[index].Default != track.Default)).Any()
-                    || subtitles.Zip(outputSubs).Any(pair =>
-                        pair.Second.Codec != EncodePlanner.DestinationSubtitleCodec(container, pair.First.Codec)
-                        || Language(pair.First) != Language(pair.Second) || pair.First.Forced != pair.Second.Forced))
+                for (var index = 0; index < audio.Count; index++)
                 {
-                    throw new InvalidOperationException("The encoded track metadata does not match the selected tracks.");
+                    var input = audio[index];
+                    var expected = audioPlan[index];
+                    var output = outputAudio[index];
+                    if (CompatibilityAnalyzer.NormalizeCodec(output.Codec) != expected.Codec
+                        || (expected.Channels is int channels && output.Channels != channels)
+                        || !SameLanguage(input.Language, output.Language)
+                        || (audio.Count > 1 && input.Default != output.Default))
+                    {
+                        throw new InvalidOperationException(
+                            $"Audio track {index + 1} metadata mismatch. Expected {expected.Codec}, {expected.Channels} channels, "
+                            + $"language {input.Language ?? "unspecified"}, default {input.Default}. Got {output.Codec}, "
+                            + $"{output.Channels} channels, language {output.Language ?? "unspecified"}, default {output.Default}.");
+                    }
+                }
+
+                for (var index = 0; index < subtitles.Length; index++)
+                {
+                    var input = subtitles[index];
+                    var output = outputSubs[index];
+                    var expectedCodec = EncodePlanner.DestinationSubtitleCodec(container, input.Codec);
+                    if (output.Codec != expectedCodec || !SameLanguage(input.Language, output.Language)
+                        || input.Forced != output.Forced)
+                    {
+                        throw new InvalidOperationException(
+                            $"Subtitle track {index + 1} metadata mismatch. Expected {expectedCodec}, language "
+                            + $"{input.Language ?? "unspecified"}, forced {input.Forced}. Got {output.Codec}, "
+                            + $"language {output.Language ?? "unspecified"}, forced {output.Forced}.");
+                    }
                 }
 
                 if (probe.VideoCodec != expectedVideo
@@ -641,6 +659,13 @@ public class EncodeWorker : BackgroundService
     private bool IsPlaying(Guid itemId)
     {
         return _sessionManager.Sessions.Any(s => s.NowPlayingItem?.Id == itemId);
+    }
+
+    private static bool SameLanguage(string? first, string? second)
+    {
+        static string? Normalize(string? value) =>
+            string.IsNullOrWhiteSpace(value) || value.Equals("und", StringComparison.OrdinalIgnoreCase) ? null : value;
+        return string.Equals(Normalize(first), Normalize(second), StringComparison.OrdinalIgnoreCase);
     }
 
     private static string TruncateDetail(string value, int max)

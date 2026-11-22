@@ -72,6 +72,14 @@ var audioPlan = new[] { EncodePlanner.PlanAudio(stereoAac, "mkv", qsvConfig) };
 var episodeBudget = EncodePlanner.VideoBitrateBudget(qsvConfig, 233_233_532, 1416.6, 1_174_514, audioPlan);
 Check(episodeBudget is > 1_000_000 and < 1_174_514, "The episode bitrate budget is below the original bitrate");
 
+using (var ogmProbe = System.Text.Json.JsonDocument.Parse("""{"tags":{"LANGUAGE":"Japanese"}}"""))
+{
+    Check(FfmpegRunner.ReadStreamLanguage(ogmProbe.RootElement) == "Japanese",
+        "OGM language tags are read regardless of key casing");
+}
+Check(EncodePlanner.DestinationSubtitleCodec("mkv", "text") == "subrip",
+    "Matroska reports copied OGM text subtitles as SubRip");
+
 var snapshots = Directory.CreateTempSubdirectory("streamready snapshots ");
 try
 {

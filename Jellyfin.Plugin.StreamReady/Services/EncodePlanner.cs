@@ -168,7 +168,7 @@ public class EncodePlanner
     }
 
     internal static string DestinationSubtitleCodec(string container, string inputCodec) =>
-        container == "mp4" ? "mov_text" : inputCodec == "mov_text" ? "subrip" : inputCodec;
+        container == "mp4" ? "mov_text" : inputCodec is "mov_text" or "text" ? "subrip" : inputCodec;
 
     public static string DestinationVideoCodec(PluginConfiguration config)
     {

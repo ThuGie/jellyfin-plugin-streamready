@@ -224,8 +224,7 @@ public class FfmpegRunner
                     bool HasFlag(string name) => disposition.ValueKind == JsonValueKind.Object
                         && disposition.TryGetProperty(name, out var flag) && flag.GetInt32() == 1;
                     var attached = HasFlag("attached_pic");
-                    var language = stream.TryGetProperty("tags", out var tags)
-                        && tags.TryGetProperty("language", out var tag) ? tag.GetString() : null;
+                    var language = ReadStreamLanguage(stream);
                     long? bitrate = stream.TryGetProperty("bit_rate", out var rate)
                         && long.TryParse(rate.ToString(), out var bits) && bits > 0 ? bits : null;
                     int? channels = stream.TryGetProperty("channels", out var channelCount)
@@ -268,6 +267,25 @@ public class FfmpegRunner
         }
 
         return info;
+    }
+
+    internal static string? ReadStreamLanguage(JsonElement stream)
+    {
+        if (!stream.TryGetProperty("tags", out var tags) || tags.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        foreach (var tag in tags.EnumerateObject())
+        {
+            if (string.Equals(tag.Name, "language", StringComparison.OrdinalIgnoreCase)
+                && tag.Value.ValueKind == JsonValueKind.String)
+            {
+                return tag.Value.GetString()?.Trim();
+            }
+        }
+
+        return null;
     }
 
     private readonly SemaphoreSlim _previewSlot = new(1, 1);
