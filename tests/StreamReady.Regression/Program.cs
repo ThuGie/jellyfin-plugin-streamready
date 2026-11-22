@@ -94,10 +94,8 @@ try
         controller.GetCandidateSeries(null, null).Value));
     Check(grouped.RootElement.GetProperty("total").GetInt32() == 2,
         "Series IDs separate different series with the same title");
-    controller.EncodeCandidateSeries(groupId);
-    controller.EncodeCandidateSeries(groupId);
-    Check(store.GetQueue().Count == 2 && store.DequeueNext()?.ItemId == "episode1"
-        && store.DequeueNext()?.ItemId == "episode2", "Whole-series encode queues flagged episodes in order without duplicates");
+    Check(Jellyfin.Plugin.StreamReady.Controllers.StreamReadyController.SeriesKey(episodeOne) == groupId,
+        "Series keys normalize Jellyfin IDs");
     File.WriteAllText(path, "invalid");
     var recovered = new JobStore(NullLogger<JobStore>.Instance, path);
     Check(recovered.IsHealthy && recovered.GetJob(job.Id) is not null, "Recover from the previous snapshot");

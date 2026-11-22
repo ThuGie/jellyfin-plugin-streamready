@@ -26,8 +26,8 @@ If MP4 cannot preserve the selected subtitle tracks, StreamReady tries MKV when 
 ### Series folders
 
 Choose **Series folders** in Needs Encoding to expand or collapse flagged episodes by
-series. **Encode whole series** queues all flagged episodes in that series, including
-episodes outside the current search, and skips jobs that are already waiting or running.
+series. **Encode qualifying episodes** rechecks matching episodes against current settings
+and skips jobs that are already waiting or running.
 
 ### Reviewing replacements
 

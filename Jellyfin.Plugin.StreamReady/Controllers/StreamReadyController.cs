@@ -230,25 +230,27 @@ public class StreamReadyController : ControllerBase
     public ActionResult<object> GetCandidateSeriesEpisodes(string id, [FromQuery] string? reason,
         [FromQuery] string? q, [FromQuery] int skip = 0)
     {
-        var candidates = OrderSeriesEpisodes(FilterCandidates(reason, "Episode", q)
-            .Where(candidate => !string.IsNullOrWhiteSpace(candidate.SeriesName) && SeriesKey(candidate) == id)).ToArray();
+        var candidates = GetEligibleSeriesEpisodes(id, reason, q);
         return new { total = candidates.Length, items = candidates.Skip(Math.Max(0, skip)).Take(100).Select(MapCandidate) };
     }
 
     [Authorize(Policy = Policies.RequiresElevation)]
     [HttpPost("candidates/series/{id}/encode")]
-    public ActionResult<object> EncodeCandidateSeries(string id)
+    public ActionResult<object> EncodeCandidateSeries(string id, [FromQuery] string? reason, [FromQuery] string? q)
     {
-        var candidates = OrderSeriesEpisodes(FilterCandidates(null, "Episode", null)
-            .Where(candidate => !string.IsNullOrWhiteSpace(candidate.SeriesName) && SeriesKey(candidate) == id)).ToArray();
-        if (candidates.Length == 0)
-        {
-            return NotFound();
-        }
-
+        var candidates = GetEligibleSeriesEpisodes(id, reason, q);
         var queued = _store.EnqueueMany(candidates).Count;
         return new { matched = candidates.Length, queued };
     }
+
+    private CandidateRecord[] GetEligibleSeriesEpisodes(string id, string? reason, string? q) =>
+        OrderSeriesEpisodes(FilterCandidates(reason, "Episode", q)
+            .Where(candidate => !string.IsNullOrWhiteSpace(candidate.SeriesName) && SeriesKey(candidate) == id)
+            .Select(_scanner.RecheckEpisode)
+            .OfType<CandidateRecord>()
+            .Where(candidate => (id.StartsWith("legacy-", StringComparison.Ordinal) || SeriesKey(candidate) == id)
+                && (string.IsNullOrWhiteSpace(reason) || candidate.Reasons.Contains(reason, StringComparer.OrdinalIgnoreCase))))
+            .ToArray();
 
     private static IOrderedEnumerable<CandidateRecord> OrderSeriesEpisodes(IEnumerable<CandidateRecord> episodes) =>
         episodes.OrderBy(candidate => candidate.SeasonNumber ?? int.MaxValue)

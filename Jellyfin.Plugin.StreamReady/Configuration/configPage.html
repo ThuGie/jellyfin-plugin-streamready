@@ -931,9 +931,9 @@
                         folder.className = 'sr-series-folder';
                         folder.innerHTML = '<summary><strong>' + escapeHtml(pick(row, 'name')) + '</strong> '
                             + '<span>' + escapeHtml(pick(row, 'libraryName')) + ' | '
-                            + pick(row, 'matchingEpisodes') + ' matching | ' + formatReplacementSize(pick(row, 'sizeBytes')) + '</span></summary>'
+                            + pick(row, 'matchingEpisodes') + ' from scan | ' + formatReplacementSize(pick(row, 'sizeBytes')) + '</span></summary>'
                             + '<button type="button" class="raised emby-button sr-encode-series" data-id="'
-                            + escapeHtml(pick(row, 'id')) + '">Encode whole series</button>'
+                            + escapeHtml(pick(row, 'id')) + '">Encode qualifying episodes</button>'
                             + '<div class="sr-series-episodes"></div>';
                         folder.addEventListener('toggle', function () {
                             if (!folder.open || folder.dataset.loaded) return;
@@ -960,8 +960,8 @@
                 api('/candidates/series/' + encodeURIComponent(id) + '/episodes?skip=' + skip + seriesFilters())
                     .then(function (result) {
                         if (!folder.isConnected) return;
-                        if (!skip) panel.textContent = '';
                         var rows = pick(result, 'items') || [];
+                        if (!skip) panel.textContent = rows.length ? '' : 'No episodes still qualify under the current settings.';
                         rows.forEach(function (row) {
                             var episode = document.createElement('div');
                             episode.className = 'sr-series-episode';
@@ -969,7 +969,8 @@
                             var number = pick(row, 'episodeNumber');
                             var prefix = season != null && number != null ? 'S' + season + 'E' + number + ' | ' : '';
                             episode.innerHTML = '<span>' + escapeHtml(prefix + pick(row, 'name')) + ' | '
-                                + escapeHtml(pick(row, 'sizeLabel')) + '</span>'
+                                + escapeHtml(pick(row, 'sizeLabel')) + '<br><small>'
+                                + escapeHtml((pick(row, 'reasonDetails') || []).join(' | ')) + '</small></span>'
                                 + '<button type="button" class="raised raised-mini emby-button sr-encode-one" data-id="'
                                 + escapeHtml(pick(row, 'id')) + '">Encode</button>';
                             panel.appendChild(episode);
@@ -1421,9 +1422,9 @@
                     }
                     var encodeSeries = ev.target.closest('.sr-encode-series');
                     if (encodeSeries) {
-                        if (!window.confirm('Queue all flagged episodes in this series, including those outside the current filters?')) return;
+                        if (!window.confirm('Queue the episodes in this series that match the current filters and still need encoding?')) return;
                         encodeSeries.disabled = true;
-                        api('/candidates/series/' + encodeURIComponent(encodeSeries.getAttribute('data-id')) + '/encode', 'POST')
+                        api('/candidates/series/' + encodeURIComponent(encodeSeries.getAttribute('data-id')) + '/encode?' + seriesFilters().slice(1), 'POST')
                             .then(function (result) {
                                 Dashboard.alert('Queued ' + pick(result, 'queued') + ' of ' + pick(result, 'matched') + ' flagged episodes.');
                                 loadQueue();

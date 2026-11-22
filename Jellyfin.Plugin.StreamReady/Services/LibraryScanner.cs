@@ -181,6 +181,45 @@ public class LibraryScanner
         }
     }
 
+    internal CandidateRecord? RecheckEpisode(CandidateRecord candidate)
+    {
+        var config = Plugin.Instance?.Configuration;
+        if (config is not { Enabled: true } || _store.IsQueued(candidate.ItemId)
+            || !Guid.TryParse(candidate.ItemId, out var itemId)
+            || _libraryManager.GetItemById(itemId) is not MediaBrowser.Controller.Entities.TV.Episode episode
+            || !episode.IsFileProtocol || (!config.IncludeExtras && episode.ExtraType is not null)
+            || !File.Exists(episode.Path))
+        {
+            return null;
+        }
+
+        var library = ResolveItemLibrary(episode, config);
+        if (library is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var source = new FileInfo(episode.Path);
+            if (_store.IsProcessed(candidate.ItemId, episode.Path, source.Length, source.LastWriteTimeUtc))
+            {
+                return null;
+            }
+
+            var result = Analyze(episode, config, library.Value.Id, library.Value.Name);
+            return result.NeedsWork ? result.Candidate : null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
     internal CompatibilityResult Analyze(BaseItem item, PluginConfiguration config, Guid libraryId, string libraryName) =>
         _analyzer.Analyze(item, config, libraryId.ToString("N"), libraryName);
 
