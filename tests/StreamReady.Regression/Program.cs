@@ -60,6 +60,18 @@ var cpuFallback = qsvRunner.BuildEncodePlan("source.mkv", "output.mkv", EncodeAc
 Check(cpuFallback.VideoEncoder == "libx264" && cpuFallback.Args.Contains("-b:v 8000000"),
     "Software fallback preserves the bitrate budget");
 
+var stereoAac = new ProbedStream(1, "audio", "aac", true, false, false, "eng", 128_784, 2);
+var stereoVorbis = stereoAac with { Index = 2, Codec = "vorbis", Bitrate = 96_000 };
+var mixedSource = new ProbeInfo { Height = 396, Streams = { new ProbedStream(0, "video", "wmv3", true, false, false, null),
+    stereoAac, stereoVorbis } };
+var mixedPlan = qsvRunner.BuildEncodePlan("source.avi", "output.mkv", EncodeAction.Full,
+    qsvConfig, source: mixedSource, videoBudget: 1_000_000);
+Check(mixedPlan.Args.Contains("-c:a:0 copy") && mixedPlan.Args.Contains("-c:a:1 aac -b:a:1 96000 -ac:a:1 2"),
+    "Full encode copies compatible AAC and caps the incompatible stereo track");
+var audioPlan = new[] { EncodePlanner.PlanAudio(stereoAac, "mkv", qsvConfig) };
+var episodeBudget = EncodePlanner.VideoBitrateBudget(qsvConfig, 233_233_532, 1416.6, 1_174_514, audioPlan);
+Check(episodeBudget is > 1_000_000 and < 1_174_514, "The episode bitrate budget is below the original bitrate");
+
 var snapshots = Directory.CreateTempSubdirectory("streamready snapshots ");
 try
 {

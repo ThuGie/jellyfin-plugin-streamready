@@ -142,7 +142,7 @@ public class EncodeJob
     public string? ReplacementId { get; set; }
 }
 
-public record ProbedStream(int Index, string Type, string Codec, bool Default, bool AttachedPicture, bool Forced, string? Language);
+public record ProbedStream(int Index, string Type, string Codec, bool Default, bool AttachedPicture, bool Forced, string? Language, long? Bitrate = null, int? Channels = null);
 
 public class ProbeInfo
 {

@@ -120,6 +120,53 @@ public class EncodePlanner
         return container;
     }
 
+    internal sealed record AudioOutput(bool Copy, string Codec, long Bitrate, int? Channels);
+
+    internal static AudioOutput PlanAudio(ProbedStream source, string container, PluginConfiguration config)
+    {
+        var codec = CompatibilityAnalyzer.NormalizeCodec(source.Codec);
+        var allowed = CompatibilityAnalyzer.Split(config.AllowedAudioCodecs)
+            .Select(CompatibilityAnalyzer.NormalizeCodec).ToHashSet();
+        var copy = ContainerSupportsAudio(container, codec) && (allowed.Count == 0 || allowed.Contains(codec));
+        if (copy)
+        {
+            return new(true, codec, source.Bitrate ?? 384_000, source.Channels);
+        }
+
+        var channels = Math.Min(source.Channels ?? 2, DestinationAudioChannels(config));
+        var ceiling = channels <= 2 ? 192_000 : 384_000;
+        var bitrate = Math.Min(source.Bitrate ?? ceiling, ceiling);
+        return new(false, "aac", bitrate, channels);
+    }
+
+    internal static long? VideoBitrateBudget(PluginConfiguration config, long sourceBytes, double duration,
+        long? sourceVideoBitrate, IReadOnlyList<AudioOutput> audio)
+    {
+        var sizeLimit = config.MaxFileSizeGiB > 0 ? config.MaxFileSizeGiB * 1073741824d : double.PositiveInfinity;
+        if (config.DiscardIfOutputLarger)
+        {
+            sizeLimit = Math.Min(sizeLimit, sourceBytes);
+        }
+
+        double budget = sourceVideoBitrate ?? long.MaxValue;
+        if (double.IsFinite(sizeLimit))
+        {
+            budget = Math.Min(budget, sizeLimit * 8 * 0.95 / duration - audio.Sum(track => track.Bitrate));
+        }
+
+        if (config.MaxVideoBitrateMbps > 0)
+        {
+            budget = Math.Min(budget, config.MaxVideoBitrateMbps * 950_000d);
+        }
+
+        if (budget < 100_000)
+        {
+            throw new InvalidOperationException("The source or configured size limit leaves too little bitrate for video.");
+        }
+
+        return budget >= long.MaxValue ? null : (long)budget;
+    }
+
     internal static string DestinationSubtitleCodec(string container, string inputCodec) =>
         container == "mp4" ? "mov_text" : inputCodec == "mov_text" ? "subrip" : inputCodec;
 

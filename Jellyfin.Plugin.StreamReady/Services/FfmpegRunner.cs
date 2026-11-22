@@ -181,7 +181,7 @@ public class FfmpegRunner
 
         var args =
             "-v error -show_entries format=duration " +
-            "-show_entries stream=index,codec_type,codec_name,width,height,bit_rate,color_transfer:stream_disposition=default,attached_pic,forced:stream_tags=language " +
+            "-show_entries stream=index,codec_type,codec_name,width,height,bit_rate,channels,color_transfer:stream_disposition=default,attached_pic,forced:stream_tags=language " +
             "-of json " + Quote(path);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
@@ -226,13 +226,16 @@ public class FfmpegRunner
                     var attached = HasFlag("attached_pic");
                     var language = stream.TryGetProperty("tags", out var tags)
                         && tags.TryGetProperty("language", out var tag) ? tag.GetString() : null;
+                    long? bitrate = stream.TryGetProperty("bit_rate", out var rate)
+                        && long.TryParse(rate.ToString(), out var bits) && bits > 0 ? bits : null;
+                    int? channels = stream.TryGetProperty("channels", out var channelCount)
+                        && channelCount.TryGetInt32(out var count) && count > 0 ? count : null;
                     info.Streams.Add(new ProbedStream(stream.GetProperty("index").GetInt32(),
-                        type ?? "", codec ?? "", HasFlag("default"), attached, HasFlag("forced"), language));
+                        type ?? "", codec ?? "", HasFlag("default"), attached, HasFlag("forced"), language, bitrate, channels));
                     if (type == "video" && !attached && !info.HasVideo)
                     {
                         info.HasVideo = true;
-                        info.VideoBitrate = stream.TryGetProperty("bit_rate", out var rate)
-                            && long.TryParse(rate.GetString(), out var bits) ? bits : null;
+                        info.VideoBitrate = bitrate;
                         info.ColorTransfer = stream.TryGetProperty("color_transfer", out var transfer)
                             ? transfer.GetString() : null;
                         if (stream.TryGetProperty("codec_name", out var codecEl))
@@ -723,6 +726,27 @@ public class FfmpegRunner
             throw new InvalidOperationException("Invalid FFmpeg preset.");
         }
 
+        void AppendAudioOptions()
+        {
+            if (source is null)
+            {
+                sb.Append("-c:a aac -b:a ").Append(audioBitrate).Append(" -ac ").Append(channels).Append(' ');
+                return;
+            }
+
+            var audioTracks = SelectAudio(source, keepAll);
+            for (var index = 0; index < audioTracks.Count; index++)
+            {
+                var track = EncodePlanner.PlanAudio(audioTracks[index], destContainer, config);
+                sb.Append("-c:a:").Append(index).Append(track.Copy ? " copy " : " aac ");
+                if (!track.Copy)
+                {
+                    sb.Append("-b:a:").Append(index).Append(' ').Append(track.Bitrate)
+                        .Append(" -ac:a:").Append(index).Append(' ').Append(track.Channels).Append(' ');
+                }
+            }
+        }
+
         var pixelFormat = string.Empty;
 
         switch (action)
@@ -731,8 +755,9 @@ public class FfmpegRunner
                 sb.Append("-c copy ");
                 break;
             case EncodeAction.AudioOnly:
-                sb.Append("-c:v copy -c:a aac -b:a ").Append(audioBitrate)
-                    .Append(" -ac ").Append(channels).Append(' ');
+                sb.Append("-c:v copy ");
+                AppendAudioOptions();
+
                 if (mapSubs)
                 {
                     sb.Append("-c:s copy ");
@@ -811,8 +836,8 @@ public class FfmpegRunner
                     pixelFormat = "yuv420p";
                 }
 
-                sb.Append("-c:a aac -b:a ").Append(audioBitrate)
-                    .Append(" -ac ").Append(channels).Append(' ');
+                AppendAudioOptions();
+
                 if (mapSubs)
                 {
                     sb.Append("-c:s copy ");

@@ -301,31 +301,21 @@ public class EncodeWorker : BackgroundService
                 throw new InvalidOperationException("The source no longer requires encoding under the current profile.");
             }
 
+            var audioPlan = audio.Select(track => EncodePlanner.PlanAudio(track, container, config)).ToArray();
             var action = fresh.PlannedAction;
-            long? videoBudget = null;
-            if (fresh.Reasons.Contains("Size"))
-            {
-                var audioOverhead = audio.Count * (EncodePlanner.DestinationAudioChannels(config) <= 2 ? 192_000 : 384_000);
-                videoBudget = (long)(config.MaxFileSizeGiB * 1073741824d * 8 * 0.95 / duration) - audioOverhead;
-                if (videoBudget < 100_000)
-                {
-                    throw new InvalidOperationException("The file-size cap leaves an infeasible video bitrate budget.");
-                }
-            }
-
-            if (fresh.Reasons.Contains("Bitrate") || (config.MaxVideoBitrateMbps > 0 && action == EncodeAction.Full))
-            {
-                var cap = (long)(config.MaxVideoBitrateMbps * 950_000d);
-                videoBudget = Math.Min(videoBudget ?? cap, cap);
-            }
             if (!EncodePlanner.ContainerSupportsVideo(container, video.Codec))
             {
                 action = EncodeAction.Full;
             }
-            else if (action == EncodeAction.Remux && audio.Any(s => !EncodePlanner.ContainerSupportsAudio(container, s.Codec)))
+            else if (action != EncodeAction.Full)
             {
-                action = EncodeAction.AudioOnly;
+                action = audioPlan.All(track => track.Copy) ? EncodeAction.Remux : EncodeAction.AudioOnly;
             }
+
+            var videoBudget = action == EncodeAction.Full
+                ? EncodePlanner.VideoBitrateBudget(config, sourceLength, duration,
+                    video.Bitrate ?? fresh.Candidate.Bitrate, audioPlan)
+                : null;
 
             var progress = new Progress<EncodeProgressUpdate>(update =>
                 _store.UpdateProgress(job.Id, Math.Min(95, update.Percent), update.Speed, update.Eta,
@@ -345,8 +335,7 @@ public class EncodeWorker : BackgroundService
                 .Select(CompatibilityAnalyzer.NormalizeCodec).ToArray();
             var expectedVideo = action == EncodeAction.Full ? EncodePlanner.DestinationVideoCodec(config) : video.Codec;
             if ((allowedVideo.Length > 0 && !allowedVideo.Contains(expectedVideo))
-                || (allowedAudio.Length > 0 && audio.Any(track => !allowedAudio.Contains(
-                    action == EncodeAction.Remux ? track.Codec : "aac"))))
+                || (allowedAudio.Length > 0 && audioPlan.Any(track => !allowedAudio.Contains(track.Codec))))
             {
                 throw new InvalidOperationException("The selected output codecs conflict with the compatibility profile.");
             }
@@ -407,10 +396,11 @@ public class EncodeWorker : BackgroundService
                 var outputSubs = probe.Streams.Where(stream => stream.Type == "subtitle").ToArray();
                 static string? Language(ProbedStream stream) => stream.Language is null or "und" ? null : stream.Language;
 
-                if (audio.Zip(outputAudio).Any(pair =>
-                        pair.Second.Codec != (action == EncodeAction.Remux ? pair.First.Codec : "aac")
-                        || Language(pair.First) != Language(pair.Second)
-                        || (audio.Count > 1 && pair.First.Default != pair.Second.Default))
+                if (outputAudio.Where((track, index) =>
+                        CompatibilityAnalyzer.NormalizeCodec(track.Codec) != audioPlan[index].Codec
+                        || (audioPlan[index].Channels is int channels && track.Channels != channels)
+                        || Language(audio[index]) != Language(track)
+                        || (audio.Count > 1 && audio[index].Default != track.Default)).Any()
                     || subtitles.Zip(outputSubs).Any(pair =>
                         pair.Second.Codec != EncodePlanner.DestinationSubtitleCodec(container, pair.First.Codec)
                         || Language(pair.First) != Language(pair.Second) || pair.First.Forced != pair.Second.Forced))
